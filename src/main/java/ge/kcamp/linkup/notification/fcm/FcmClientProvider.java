@@ -38,25 +38,28 @@ public class FcmClientProvider {
     @PostConstruct
     void init() {
         if (credentialsPath == null || credentialsPath.isBlank()) {
-            if (env.acceptsProfiles(org.springframework.core.env.Profiles.of("prod"))) {
-                throw new IllegalStateException("FCM credentials are required in production (linkup.fcm.credentials-path is missing).");
-            }
             log.warn("linkup.fcm.credentials-path not set; push notifications via FCM are disabled.");
             return;
         }
 
-        try (InputStream in = new FileInputStream(credentialsPath)) {
-            FirebaseOptions options = FirebaseOptions.builder()
-                    .setCredentials(GoogleCredentials.fromStream(in))
-                    .build();
-            FirebaseApp app = FirebaseApp.getApps().isEmpty()
-                    ? FirebaseApp.initializeApp(options)
-                    : FirebaseApp.getInstance();
-            this.client = FirebaseMessaging.getInstance(app);
-        } catch (Exception e) {
-            if (env.acceptsProfiles(org.springframework.core.env.Profiles.of("prod"))) {
-                throw new IllegalStateException("Failed to initialize FCM in production", e);
+        try {
+            InputStream in;
+            if (credentialsPath.trim().startsWith("{")) {
+                in = new java.io.ByteArrayInputStream(credentialsPath.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            } else {
+                in = new FileInputStream(credentialsPath);
             }
+
+            try (in) {
+                FirebaseOptions options = FirebaseOptions.builder()
+                        .setCredentials(GoogleCredentials.fromStream(in))
+                        .build();
+                FirebaseApp app = FirebaseApp.getApps().isEmpty()
+                        ? FirebaseApp.initializeApp(options)
+                        : FirebaseApp.getInstance();
+                this.client = FirebaseMessaging.getInstance(app);
+            }
+        } catch (Exception e) {
             log.warn("Failed to initialize FCM ({}); push notifications via FCM are disabled.", e.getMessage());
         }
     }
