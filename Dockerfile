@@ -2,6 +2,9 @@
 FROM eclipse-temurin:25-jdk AS build
 WORKDIR /app
 
+# Ensure curl and unzip are present for the maven wrapper
+RUN apt-get update && apt-get install -y curl unzip && rm -rf /var/lib/apt/lists/*
+
 # Copy maven wrapper and pom.xml first to cache dependency downloads
 COPY mvnw pom.xml ./
 COPY .mvn .mvn
