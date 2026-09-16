@@ -1,0 +1,1 @@
+ALTER TABLE activities ALTER COLUMN start_time SET NOT NULL;

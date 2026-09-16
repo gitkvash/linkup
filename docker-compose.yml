@@ -1,0 +1,24 @@
+services:
+  db:
+    image: postgis/postgis:15-3.3
+    container_name: linkup-postgres
+    environment:
+      POSTGRES_USER: linkup
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: linkup
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: linkup-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+volumes:
+  postgres-data:
+  redis-data:

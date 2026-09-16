@@ -1,0 +1,114 @@
+server:
+  shutdown: graceful
+
+spring:
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  application:
+    name: linkup
+
+  profiles:
+    # No profile set means local development: application-dev.yaml supplies the
+    # dev-only secrets and verbose SQL logging. Deployments run with
+    # SPRING_PROFILES_ACTIVE=prod, which loads none of that - so a missing
+    # LINKUP_JWT_SECRET fails startup instead of silently signing tokens with a
+    # key that is public in this repository's history.
+    default: dev
+
+  # The schema owner. Flyway and background work use this; request handling does NOT -
+  # it uses the restricted role under linkup.datasource.app below, which is the one every
+  # row-level policy actually applies to. See DataSourceConfig.
+  datasource:
+    url: ${LINKUP_DB_URL:jdbc:postgresql://localhost:5433/linkup}
+    username: ${LINKUP_DB_USERNAME:linkup}
+    password: ${LINKUP_DB_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
+
+  flyway:
+    # Given its own connection rather than reusing the primary DataSource bean: that bean
+    # routes to the restricted role, which has no DDL rights by design.
+    url: ${spring.datasource.url}
+    user: ${spring.datasource.username}
+    password: ${spring.datasource.password}
+    placeholders:
+      # Consumed by V17, which creates the role. Must not contain a single quote.
+      app_db_password: ${LINKUP_APP_DB_PASSWORD:}
+
+  jpa:
+    hibernate:
+      # Flyway owns the schema; Hibernate only validates the mapping matches it.
+      ddl-auto: validate
+    show-sql: false
+    # A JDBC connection held for the whole request - including the multi-second
+    # CoreNLP parse on activity creation - starves the pool under any load.
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  data:
+    redis:
+      host: ${LINKUP_REDIS_HOST:localhost}
+      port: ${LINKUP_REDIS_PORT:6379}
+      password: ${LINKUP_REDIS_PASSWORD:}
+      ssl:
+        enabled: ${LINKUP_REDIS_SSL:false}
+
+  modulith:
+    events:
+      # Defaults to false, so the at-least-once delivery the fan-out and notification
+      # listeners are documented to rely on did not actually exist: a publication left
+      # incomplete by a crash was never retried. Property name verified against
+      # spring-configuration-metadata.json in spring-modulith-events-core.
+      #
+      # Only safe with notification deduplication in place (V10's dedupe_key), or every
+      # restart would redeliver and duplicate rows.
+      republish-outstanding-events-on-restart: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: never
+  tracing:
+    sampling:
+      probability: ${LINKUP_TRACE_SAMPLING:0.1}
+
+logging:
+  pattern:
+    level: "%5p [%X{traceId:-},%X{spanId:-}]"
+
+linkup:
+  datasource:
+    # The role requests are served as: no ownership, no superuser, no BYPASSRLS. Startup
+    # fails outside the dev profile if these are unset, rather than falling back to the
+    # owner - an application accidentally running as a superuser looks perfectly healthy.
+    #
+    # Rollback for the whole least-privilege change: point these at the owner.
+    app:
+      username: ${LINKUP_APP_DB_USERNAME:linkup_app}
+      password: ${LINKUP_APP_DB_PASSWORD:}
+      max-pool-size: ${LINKUP_APP_DB_MAX_POOL_SIZE:10}
+  security:
+    jwt:
+      # Intentionally no default. See spring.profiles.default above.
+      secret: ${LINKUP_JWT_SECRET:}
+      expiration-ms: ${LINKUP_JWT_EXPIRATION_MS:86400000}
+    google:
+      # The Web OAuth client ID from Google Cloud Console - not secret, but still
+      # externalized. This is the audience GoogleTokenVerifier checks ID tokens
+      # against, and must match the serverClientId the Flutter client signs in with.
+      client-id: ${LINKUP_GOOGLE_CLIENT_ID:}
+  feed:
+    ttl-days: ${LINKUP_FEED_TTL_DAYS:30}
+    max-timeline-size: ${LINKUP_FEED_MAX_TIMELINE_SIZE:500}
+    influencer-threshold: ${LINKUP_FEED_INFLUENCER_THRESHOLD:500}
+  sse:
+    # Emitters must expire: every open SSE connection pins a servlet request
+    # thread, and the client reconnects automatically.
+    timeout: ${LINKUP_SSE_TIMEOUT:PT15M}
+  fcm:
+    credentials-path: ${LINKUP_FCM_CREDENTIALS_PATH:}

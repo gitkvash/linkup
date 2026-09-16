@@ -1,0 +1,37 @@
+# Local development only. Active by default (spring.profiles.default: dev), and
+# deliberately never loaded when SPRING_PROFILES_ACTIVE names a real environment -
+# that is what keeps the throwaway credentials below out of anything deployed.
+spring:
+  datasource:
+    password: ${LINKUP_DB_PASSWORD:password}
+
+  flyway:
+    placeholders:
+      # Throwaway. V17 creates linkup_app with this on first migration; rotate with
+      # ALTER ROLE anywhere real, since migration SQL ends up in the server log.
+      app_db_password: ${LINKUP_APP_DB_PASSWORD:app_password}
+
+  jpa:
+    show-sql: true
+
+management:
+  tracing:
+    sampling:
+      probability: 1.0
+
+linkup:
+  datasource:
+    app:
+      # Must match the app_db_password placeholder above - that is what V17 created the
+      # role with. Change one and you change both.
+      password: ${LINKUP_APP_DB_PASSWORD:app_password}
+  security:
+    jwt:
+      # Throwaway 48-byte base64 key for local runs. JwtUtil refuses to start with
+      # this value under any non-dev profile, so copying it into a deployment fails
+      # loudly rather than shipping a publicly known signing key.
+      secret: ${LINKUP_JWT_SECRET:ZGV2LW9ubHkta2V5LWRvLW5vdC11c2UtaW4tcHJvZHVjdGlvbi1saW5rdXAtMDE=}
+    google:
+      # Not a secret (it's the public OAuth client ID), so a real default here is
+      # fine - unlike the JWT secret above, this one is safe to check in.
+      client-id: ${LINKUP_GOOGLE_CLIENT_ID:453662062465-rl8jt8kj8f6r0a0kv4qlr0fpk9cnujeb.apps.googleusercontent.com}
