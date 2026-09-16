@@ -150,6 +150,20 @@ check "DELETE /activities/{id}/join" 204 "$(code -X DELETE -H "$AUTHB" "$API/act
 
 MAP=$(curl -s -H "$AUTHA" "$API/activities/map?minLat=41.6&minLng=44.7&maxLat=41.8&maxLng=44.9&zoom=14")
 has "GET /activities/map carries type/lat/lng/count" "$MAP" '"count"'
+# Every pin draws its plan's category glyph. Without this field the map is a screen of
+# identical dots again, and MarkerIcon has nothing to tell a run from a dinner.
+has "GET /activities/map carries the category the pin draws" "$MAP" '"category"'
+
+# ActivityApi.searchMapActivities - the map's search box, which is the only reason the
+# placeholder can say "activities or places". Ordered by distance from the map centre.
+MAPQ=$(curl -s -H "$AUTHA" "$API/activities/map/search?q=Contract&lat=41.7151&lng=44.8271&limit=8")
+has "GET /activities/map/search finds a plan by title" "$MAPQ" '"title":"Contract plan"'
+has "and carries the distance the result row shows" "$MAPQ" '"distanceMeters"'
+has "and the category its glyph comes from" "$MAPQ" '"category"'
+has "and the time, which is half of what the row says" "$MAPQ" '"startTime"'
+# The client never sends a shorter one (MapPlanSearchNotifier stops at two characters);
+# a bare wildcard would otherwise return every future plan the caller can see.
+check "a one-character query is rejected" 400 "$(code -H "$AUTHA" "$API/activities/map/search?q=x&lat=41.7151&lng=44.8271")"
 
 # ActivityApi.updateActivity / deleteActivity - the edit screen's only two calls.
 UPD=$(code -X PATCH "$API/activities/$AID" -H "$JSON" -H "$AUTHA" -d '{

@@ -2,11 +2,14 @@ package ge.kcamp.linkup.activity.controller;
 
 import ge.kcamp.linkup.activity.dto.BoundingBox;
 import ge.kcamp.linkup.activity.dto.MapMarkerDto;
+import ge.kcamp.linkup.activity.dto.MapSearchResultDto;
 import ge.kcamp.linkup.activity.repository.ActivityMapRepository;
 import ge.kcamp.linkup.activity.web.ZoomClusterResolver;
 import ge.kcamp.linkup.UserContext;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -54,5 +57,27 @@ public class ActivityMapController {
 
         return activityMapRepository.findClusteredMarkers(
                 bbox, params.epsMeters(), params.minPoints(), notBefore, UserContext.getUserId());
+    }
+
+    /**
+     * What the map's search box calls: the activities the caller may see whose title or
+     * address matches {@code q}, nearest to {@code lat}/{@code lng} first.
+     * <p>
+     * Separate from the marker endpoint rather than a {@code q} parameter on it, because
+     * the two answer different questions. Markers are clustered and clipped to the
+     * viewport - a search that returned markers could only ever find what was already on
+     * screen, and would hand back a cluster where the user asked for a plan.
+     */
+    @GetMapping("/search")
+    public List<MapSearchResultDto> search(
+            @RequestParam @NotBlank @Size(min = 2, max = 120) String q,
+            @RequestParam double lat,
+            @RequestParam double lng,
+            @RequestParam(defaultValue = "8") @Min(1) @Max(ActivityMapRepository.MAX_SEARCH_RESULTS) int limit) {
+
+        Instant notBefore = Instant.now().minus(1, ChronoUnit.HOURS);
+
+        return activityMapRepository.searchNearby(
+                q, lat, lng, limit, notBefore, UserContext.getUserId());
     }
 }
