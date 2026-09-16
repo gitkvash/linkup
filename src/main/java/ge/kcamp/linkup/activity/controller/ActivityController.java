@@ -3,6 +3,7 @@ package ge.kcamp.linkup.activity.controller;
 import ge.kcamp.linkup.activity.ActivityFeedItem;
 import ge.kcamp.linkup.activity.ActivityParticipant;
 import ge.kcamp.linkup.activity.ActivityParticipationService;
+import ge.kcamp.linkup.activity.ActivityLifecycleService;
 import ge.kcamp.linkup.activity.ActivityQueryService;
 import ge.kcamp.linkup.activity.command.ActivityCommandHandler;
 import ge.kcamp.linkup.activity.command.CreateActivityFromTextCommand;
@@ -31,14 +32,17 @@ public class ActivityController {
     private final ActivityCommandHandler activityCommandHandler;
     private final ActivityQueryService activityQueryService;
     private final ActivityParticipationService participationService;
+    private final ActivityLifecycleService activityLifecycleService;
 
     public ActivityController(
             ActivityCommandHandler activityCommandHandler,
             ActivityQueryService activityQueryService,
-            ActivityParticipationService participationService) {
+            ActivityParticipationService participationService,
+            ActivityLifecycleService activityLifecycleService) {
         this.activityCommandHandler = activityCommandHandler;
         this.activityQueryService = activityQueryService;
         this.participationService = participationService;
+        this.activityLifecycleService = activityLifecycleService;
     }
 
     @PostMapping("/from-text")
@@ -151,5 +155,32 @@ public class ActivityController {
             @PathVariable UUID id, @RequestParam boolean going) {
         return ResponseEntity.ok(new ParticipationDto(
                 participationService.respond(id, UserContext.getUserId(), going)));
+    }
+
+    /**
+     * The host says it has begun. Rarely needed - a plan starts by itself five minutes
+     * after its start time - so this is for the plan that began early, or the one whose
+     * host wants everyone to see it is on.
+     * <p>
+     * Answers with the read model, so the client can render the new status without a
+     * follow-up GET. Creator only; everyone else gets the 404 that editing gives.
+     */
+    @PostMapping("/{id}/start")
+    public ResponseEntity<ActivityFeedItem> start(@PathVariable UUID id) {
+        UUID actorId = UserContext.getUserId();
+        activityLifecycleService.start(id, actorId);
+        return activityQueryService.findById(id, actorId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    /** The host says it is over, before its window would have ended it. */
+    @PostMapping("/{id}/end")
+    public ResponseEntity<ActivityFeedItem> end(@PathVariable UUID id) {
+        UUID actorId = UserContext.getUserId();
+        activityLifecycleService.end(id, actorId);
+        return activityQueryService.findById(id, actorId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
     }
 }

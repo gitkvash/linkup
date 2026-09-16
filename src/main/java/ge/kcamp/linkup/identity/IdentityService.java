@@ -12,6 +12,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Optional;
+
 @Service
 public class IdentityService {
 
@@ -53,7 +55,7 @@ public class IdentityService {
             throw new DuplicateUsernameException();
         }
 
-        return issueToken(saved);
+        return issueToken(saved, true);
     }
 
     @Transactional(readOnly = true)
@@ -65,15 +67,18 @@ public class IdentityService {
             throw new AuthenticationFailedException();
         }
 
-        return issueToken(user);
+        return issueToken(user, false);
     }
 
     @Transactional
     public AuthResponse loginWithGoogle(String idToken) {
         GoogleTokenVerifier.Result verified = googleTokenVerifier.verify(idToken);
-        User user = userRepository.findByGoogleId(verified.subject())
-                .orElseGet(() -> createGoogleUser(verified));
-        return issueToken(user);
+        Optional<User> existing = userRepository.findByGoogleId(verified.subject());
+        User user = existing.orElseGet(() -> createGoogleUser(verified));
+        // Only the first time. The derived username below is a guess, and the client
+        // turns this flag into one chance to replace it - on every sign-in it would be
+        // a form standing between the user and the app.
+        return issueToken(user, existing.isEmpty());
     }
 
     private User createGoogleUser(GoogleTokenVerifier.Result verified) {
@@ -114,8 +119,8 @@ public class IdentityService {
         throw new IllegalStateException("Could not generate a unique username for " + base);
     }
 
-    private AuthResponse issueToken(User user) {
+    private AuthResponse issueToken(User user, boolean newAccount) {
         String token = jwtUtil.generateToken(user.getId(), user.getUsername());
-        return new AuthResponse(token, user.getId(), user.getUsername());
+        return new AuthResponse(token, user.getId(), user.getUsername(), newAccount);
     }
 }

@@ -157,7 +157,7 @@ public class SocialGraphService {
                 .map(friendship -> otherParty(friendship, userId))
                 .toList();
 
-        Map<UUID, String> usernames = userDirectoryService.usernamesFor(blockedIds);
+        Map<UUID, String> usernames = userDirectoryService.namesFor(blockedIds);
         return blockedIds.stream()
                 .map(id -> new FriendSummary(id, usernames.get(id)))
                 .sorted(Comparator.comparing(
@@ -197,7 +197,7 @@ public class SocialGraphService {
     @Transactional(readOnly = true)
     public List<FriendSummary> getFriends(UUID userId) {
         List<UUID> friendIds = getAcceptedFriendIds(userId);
-        Map<UUID, String> usernames = userDirectoryService.usernamesFor(friendIds);
+        Map<UUID, String> usernames = userDirectoryService.namesFor(friendIds);
         return friendIds.stream()
                 .map(id -> new FriendSummary(id, usernames.get(id)))
                 .sorted(Comparator.comparing(
@@ -216,7 +216,7 @@ public class SocialGraphService {
         List<Friendship> pending =
                 friendshipRepository.findByStatusForUser(userId, FriendshipStatus.PENDING);
 
-        Map<UUID, String> usernames = userDirectoryService.usernamesFor(
+        Map<UUID, String> usernames = userDirectoryService.namesFor(
                 pending.stream().map(friendship -> otherParty(friendship, userId)).toList());
 
         return pending.stream()

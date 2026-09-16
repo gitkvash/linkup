@@ -85,6 +85,24 @@ has "GET /groups/{id}/members carries owner flag" "$(curl -s -H "$AUTHA" "$API/g
 check "the owner cannot remove themselves" 400 "$(code -X DELETE -H "$AUTHA" "$API/groups/$GID/members/$IDA")"
 has "the group is still readable by its owner" "$(curl -s -H "$AUTHA" "$API/groups/mine")" "$GID"
 
+# UserApi.updateMe - the edit-profile screen, and the username step a brand-new Google
+# account gets on its way in.
+ME=$(curl -s -X PATCH "$API/users/me" -H "$JSON" -H "$AUTHA" -d "{
+  \"username\":\"$A\",\"displayName\":\"Contract Tester\",\"bio\":\"Testing the contract.\"}")
+has "PATCH /users/me sets a display name" "$ME" '"displayName":"Contract Tester"'
+has "and a bio" "$ME" '"bio"'
+has "and GET /users/me reads them back" "$(curl -s -H "$AUTHA" "$API/users/me")" '"displayName":"Contract Tester"'
+# Null means "leave it", empty means "clear it" - the form sends the whole shape every
+# time, so a profile with no bio must not become one that cannot keep a bio.
+CLEARED=$(curl -s -X PATCH "$API/users/me" -H "$JSON" -H "$AUTHA" -d '{"displayName":"","bio":""}')
+has "an empty display name clears it" "$CLEARED" '"displayName":null'
+check "a username already taken is a 409" 409 "$(code -X PATCH "$API/users/me" -H "$JSON" -H "$AUTHA" -d "{\"username\":\"$B\"}")"
+check "a username with spaces is a 400" 400 "$(code -X PATCH "$API/users/me" -H "$JSON" -H "$AUTHA" -d '{"username":"not a name"}')"
+# AuthResponse.newAccount is what sends a first-time Google user to the username step;
+# signing in again must not put that form in front of them.
+has "register says the account is new" "$RA" '"newAccount":true'
+has "login says it is not" "$(curl -s -X POST "$API/auth/login" -H "$JSON" -d "{\"username\":\"$A\",\"password\":\"password123\"}")" '"newAccount":false'
+
 echo "== activity: what activity_api.dart calls =="
 # The client sends startTime as DateTime.toUtc().toIso8601String() - milliseconds, Z suffix.
 CREATE=$(curl -s -X POST "$API/activities" -H "$JSON" -H "$AUTHA" -d '{
@@ -128,6 +146,9 @@ has "GET /activities/{id} carries activityId" "$DETAIL" '"activityId"'
 # Without this the detail screen's "Organiser" row can only render the raw id.
 has "GET /activities/{id} names the creator" "$DETAIL" "\"creatorUsername\":\"$A\""
 has "GET /activities/{id} carries participantCount" "$DETAIL" '"participantCount"'
+# The status is derived on every read, never stored, so a client that shows "Happening
+# now" is reading this field and nothing else.
+has "GET /activities/{id} carries status" "$DETAIL" '"status":"UPCOMING"'
 has "GET /activities/{id} carries viewerStatus" "$DETAIL" '"viewerStatus"'
 has "GET /activities/mine" "$(curl -s -H "$AUTHA" "$API/activities/mine")" "$AID"
 check "GET /activities/invited" 200 "$(code -H "$AUTHB" "$API/activities/invited")"
@@ -148,11 +169,25 @@ esac
 has "and the headcount counts the joiner once" "$(curl -s -H "$AUTHA" "$API/activities/$AID")" '"participantCount":2'
 check "DELETE /activities/{id}/join" 204 "$(code -X DELETE -H "$AUTHB" "$API/activities/$AID/join")"
 
+# ActivityApi.startActivity / endActivity - the host's two lifecycle controls. Both
+# answer with the read model, so the detail screen re-renders without a second GET.
+STARTED=$(curl -s -X POST -H "$AUTHA" "$API/activities/$AID/start")
+has "POST /activities/{id}/start makes it live" "$STARTED" '"status":"LIVE"'
+ENDED=$(curl -s -X POST -H "$AUTHA" "$API/activities/$AID/end")
+has "POST /activities/{id}/end ends it" "$ENDED" '"status":"ENDED"'
+# Same 404 rule as editing: a non-creator must not learn the plan exists.
+check "someone else cannot start your plan" 404 "$(code -X POST -H "$AUTHB" "$API/activities/$AID/start")"
+# Put it back, so the map assertions below still have something live to find.
+curl -s -o /dev/null -X POST -H "$AUTHA" "$API/activities/$AID/start"
+
 MAP=$(curl -s -H "$AUTHA" "$API/activities/map?minLat=41.6&minLng=44.7&maxLat=41.8&maxLng=44.9&zoom=14")
 has "GET /activities/map carries type/lat/lng/count" "$MAP" '"count"'
 # Every pin draws its plan's category glyph. Without this field the map is a screen of
 # identical dots again, and MarkerIcon has nothing to tell a run from a dinner.
 has "GET /activities/map carries the category the pin draws" "$MAP" '"category"'
+# The map filters out anything that is over, so the only statuses it can answer with are
+# the two the pin has a treatment for.
+has "GET /activities/map carries the status the pin draws" "$MAP" '"status"'
 
 # ActivityApi.searchMapActivities - the map's search box, which is the only reason the
 # placeholder can say "activities or places". Ordered by distance from the map centre.

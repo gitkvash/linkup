@@ -69,7 +69,7 @@ public class FeedQueryService {
                 ordered.size() > pageSize ? ordered.subList(0, pageSize) : ordered;
 
         // One batch lookup for the whole page rather than a query per card.
-        Map<UUID, String> creatorNames = userDirectoryService.usernamesFor(
+        Map<UUID, String> creatorNames = userDirectoryService.namesFor(
                 page.stream().map(ActivityFeedItem::creatorId).distinct().toList());
 
         List<FeedItemDto> items = page.stream()

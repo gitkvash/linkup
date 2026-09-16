@@ -1,6 +1,7 @@
 package ge.kcamp.linkup.activity.query;
 
 import ge.kcamp.linkup.activity.ActivityFeedItem;
+import ge.kcamp.linkup.activity.ActivityStatusResolver;
 import ge.kcamp.linkup.activity.ActivityVisibilitySql;
 import ge.kcamp.linkup.activity.enums.ActivityCategory;
 import ge.kcamp.linkup.activity.enums.ActivityType;
@@ -15,6 +16,7 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZonedDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -38,8 +40,10 @@ public class ActivityQueryRepository {
 
     private static final String BASE_SELECT = """
             SELECT a.activity_id, a.creator_id, u.username AS creator_username,
+                   u.display_name AS creator_display_name,
                    a.title, a.activity_type, a.visibility, a.category,
-                   a.start_time, a.end_time, a.has_time, l.address_text,
+                   a.start_time, a.end_time, a.has_time, a.started_at, a.ended_at,
+                   l.address_text,
                    ST_Y(l.geom_point) AS lat, ST_X(l.geom_point) AS lng,
                    (SELECT count(*) FROM participants p
                      WHERE p.activity_id = a.activity_id AND p.status = 'JOINED') AS participant_count,
@@ -143,16 +147,22 @@ public class ActivityQueryRepository {
         Double lat = rs.getObject("lat") == null ? null : rs.getDouble("lat");
         Double lng = rs.getObject("lng") == null ? null : rs.getDouble("lng");
         String viewerStatus = rs.getString("viewer_status");
+        OffsetDateTime startedAt = rs.getObject("started_at", OffsetDateTime.class);
+        OffsetDateTime endedAt = rs.getObject("ended_at", OffsetDateTime.class);
+        ZonedDateTime startTime = rs.getObject("start_time", OffsetDateTime.class).toZonedDateTime();
+        ZonedDateTime endsAt = endTime == null ? null : endTime.toZonedDateTime();
+        RepeatFrequency frequency = repeatFreq == null ? null : RepeatFrequency.valueOf(repeatFreq);
 
         return new ActivityFeedItem(
                 (UUID) rs.getObject("activity_id"),
                 (UUID) rs.getObject("creator_id"),
                 rs.getString("creator_username"),
+                rs.getString("creator_display_name"),
                 rs.getString("title"),
                 ActivityType.valueOf(rs.getString("activity_type")),
                 ActivityVisibility.valueOf(rs.getString("visibility")),
-                rs.getObject("start_time", OffsetDateTime.class).toZonedDateTime(),
-                endTime == null ? null : endTime.toZonedDateTime(),
+                startTime,
+                endsAt,
                 rs.getBoolean("has_time"),
                 rs.getString("address_text"),
                 lat,
@@ -162,9 +172,20 @@ public class ActivityQueryRepository {
                 (UUID) rs.getObject("group_id"),
                 rs.getString("group_name"),
                 ActivityCategory.valueOf(rs.getString("category")),
-                repeatFreq == null ? null : RepeatFrequency.valueOf(repeatFreq),
+                frequency,
                 repeatInterval,
-                repeatUntil == null ? null : repeatUntil.toZonedDateTime()
+                repeatUntil == null ? null : repeatUntil.toZonedDateTime(),
+                ActivityStatusResolver.resolve(
+                        new ActivityStatusResolver.Lifecycle(
+                                startTime,
+                                endsAt,
+                                rs.getBoolean("has_time"),
+                                frequency,
+                                repeatInterval,
+                                repeatUntil == null ? null : repeatUntil.toZonedDateTime(),
+                                startedAt == null ? null : startedAt.toZonedDateTime(),
+                                endedAt == null ? null : endedAt.toZonedDateTime()),
+                        ZonedDateTime.now())
         );
     }
 }

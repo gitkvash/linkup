@@ -15,8 +15,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.List;
 
 // No @Validated: Spring 6.1+ applies built-in method validation to constrained
@@ -53,10 +51,9 @@ public class ActivityMapController {
         bbox.validate();
 
         ZoomClusterResolver.ClusterParams params = zoomClusterResolver.resolve(zoom);
-        Instant notBefore = Instant.now().minus(1, ChronoUnit.HOURS);
 
         return activityMapRepository.findClusteredMarkers(
-                bbox, params.epsMeters(), params.minPoints(), notBefore, UserContext.getUserId());
+                bbox, params.epsMeters(), params.minPoints(), UserContext.getUserId());
     }
 
     /**
@@ -75,9 +72,6 @@ public class ActivityMapController {
             @RequestParam double lng,
             @RequestParam(defaultValue = "8") @Min(1) @Max(ActivityMapRepository.MAX_SEARCH_RESULTS) int limit) {
 
-        Instant notBefore = Instant.now().minus(1, ChronoUnit.HOURS);
-
-        return activityMapRepository.searchNearby(
-                q, lat, lng, limit, notBefore, UserContext.getUserId());
+        return activityMapRepository.searchNearby(q, lat, lng, limit, UserContext.getUserId());
     }
 }

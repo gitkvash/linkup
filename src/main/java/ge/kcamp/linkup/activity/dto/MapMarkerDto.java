@@ -1,6 +1,7 @@
 package ge.kcamp.linkup.activity.dto;
 
 import ge.kcamp.linkup.activity.enums.ActivityCategory;
+import ge.kcamp.linkup.activity.enums.ActivityStatus;
 import ge.kcamp.linkup.activity.enums.ActivityType;
 
 import java.util.UUID;
@@ -22,7 +23,13 @@ public record MapMarkerDto(
         UUID activityId,
         String title,
         ActivityType activityType,
-        ActivityCategory category
+        ActivityCategory category,
+
+        /*
+         * Never ENDED: the map filters those out before clustering. A cluster reports LIVE
+         * when any plan in it is, which is what makes it worth zooming into.
+         */
+        ActivityStatus status
 ) {
     public enum MarkerType {
         PIN,

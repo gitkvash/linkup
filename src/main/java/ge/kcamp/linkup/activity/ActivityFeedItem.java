@@ -1,6 +1,7 @@
 package ge.kcamp.linkup.activity;
 
 import ge.kcamp.linkup.activity.enums.ActivityCategory;
+import ge.kcamp.linkup.activity.enums.ActivityStatus;
 import ge.kcamp.linkup.activity.enums.ActivityType;
 import ge.kcamp.linkup.activity.enums.ActivityVisibility;
 import ge.kcamp.linkup.activity.enums.ParticipantStatus;
@@ -27,6 +28,13 @@ import java.util.UUID;
  *                         {@code repeatUntil} (null = no end date). Nothing is
  *                         materialised per occurrence, so the client renders the rule -
  *                         see {@code V24__activity_recurrence.sql}.
+ * @param status           where the plan is in its own life - upcoming, live or over.
+ *                         Derived on every read rather than stored; see
+ *                         {@link ActivityStatusResolver}.
+ * @param creatorDisplayName what the creator calls themselves, when they have set
+ *                         anything. Null falls back to {@code creatorUsername} - the
+ *                         client renders one line, and which name fills it is a
+ *                         question with one answer, not one per screen.
  * @param creatorUsername  who made the plan. Carried for the same reason
  *                         {@code FeedItemDto} carries it: the client had only
  *                         {@code creatorId}, so the detail screen's "Organiser" row
@@ -37,6 +45,7 @@ public record ActivityFeedItem(
         UUID activityId,
         UUID creatorId,
         String creatorUsername,
+        String creatorDisplayName,
         String title,
         ActivityType activityType,
         ActivityVisibility visibility,
@@ -53,6 +62,7 @@ public record ActivityFeedItem(
         ActivityCategory category,
         RepeatFrequency repeatFrequency,
         Integer repeatInterval,
-        ZonedDateTime repeatUntil
+        ZonedDateTime repeatUntil,
+        ActivityStatus status
 ) {
 }

@@ -1,18 +1,18 @@
 package ge.kcamp.linkup.activity.repository;
 
+import ge.kcamp.linkup.activity.ActivityStatusSql;
 import ge.kcamp.linkup.activity.ActivityVisibilitySql;
 import ge.kcamp.linkup.activity.dto.BoundingBox;
 import ge.kcamp.linkup.activity.dto.MapMarkerDto;
 import ge.kcamp.linkup.activity.dto.MapSearchResultDto;
 import ge.kcamp.linkup.activity.enums.ActivityCategory;
+import ge.kcamp.linkup.activity.enums.ActivityStatus;
 import ge.kcamp.linkup.activity.enums.ActivityType;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Timestamp;
-import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
 import java.util.List;
@@ -46,16 +46,19 @@ public class ActivityMapRepository {
     // COALESCE below gives each noise point its own unique group key instead.
     private static final String CLUSTER_QUERY = """
             WITH visible AS (
-                SELECT a.activity_id, a.title, a.activity_type, a.category, l.geom_point
+                SELECT a.activity_id, a.title, a.activity_type, a.category,
+                       (a.started_at IS NOT NULL
+                        OR (a.has_time AND now() >= a.start_time + interval '5 minutes')) AS is_live,
+                       l.geom_point
                 FROM activities a
                 JOIN locations l ON l.activity_id = a.activity_id
                 WHERE l.geom_point IS NOT NULL
                   AND l.geom_point && ST_MakeEnvelope(:minLng, :minLat, :maxLng, :maxLat, 4326)
-                  AND a.start_time >= :notBefore
+                  AND %s
                   AND %s
                 LIMIT %d
             ), clustered AS (
-                SELECT activity_id, title, activity_type, category, geom_point,
+                SELECT activity_id, title, activity_type, category, is_live, geom_point,
                        ST_ClusterDBSCAN(ST_Transform(geom_point, 3857), eps := :epsMeters, minpoints := :minPoints)
                            OVER () AS cluster_id
                 FROM visible
@@ -67,10 +70,11 @@ public class ActivityMapRepository {
                    (array_agg(activity_id))[1] AS any_activity_id,
                    (array_agg(title))[1] AS any_title,
                    (array_agg(activity_type))[1] AS any_activity_type,
-                   (array_agg(category))[1] AS any_category
+                   (array_agg(category))[1] AS any_category,
+                   bool_or(is_live) AS any_live
             FROM clustered
             GROUP BY 1
-            """.formatted(ActivityVisibilitySql.VISIBLE_TO_VIEWER, MAX_CLUSTERED_ROWS);
+            """.formatted(ActivityStatusSql.NOT_ENDED, ActivityVisibilitySql.VISIBLE_TO_VIEWER, MAX_CLUSTERED_ROWS);
 
     private final NamedParameterJdbcTemplate jdbcTemplate;
 
@@ -79,7 +83,7 @@ public class ActivityMapRepository {
     }
 
     public List<MapMarkerDto> findClusteredMarkers(
-            BoundingBox bbox, double epsMeters, int minPoints, Instant notBefore, UUID viewerId) {
+            BoundingBox bbox, double epsMeters, int minPoints, UUID viewerId) {
 
         Map<String, Object> params = new HashMap<>();
         params.put("minLat", bbox.minLat());
@@ -88,7 +92,6 @@ public class ActivityMapRepository {
         params.put("maxLng", bbox.maxLng());
         params.put("epsMeters", epsMeters);
         params.put("minPoints", minPoints);
-        params.put("notBefore", Timestamp.from(notBefore));
         params.put(ActivityVisibilitySql.VIEWER_ID_PARAM,
                 Objects.requireNonNull(viewerId, "viewerId is required to read the map"));
 
@@ -100,17 +103,23 @@ public class ActivityMapRepository {
         double lat = rs.getDouble("lat");
         double lng = rs.getDouble("lng");
 
+        // Anything over has already been filtered out by ActivityStatusSql.NOT_ENDED, so
+        // the only question left is whether it has begun.
+        ActivityStatus status = rs.getBoolean("any_live") ? ActivityStatus.LIVE : ActivityStatus.UPCOMING;
+
         if (count == 1) {
             return new MapMarkerDto(
                     MapMarkerDto.MarkerType.PIN, lat, lng, count,
                     (UUID) rs.getObject("any_activity_id"),
                     rs.getString("any_title"),
                     ActivityType.valueOf(rs.getString("any_activity_type")),
-                    ActivityCategory.valueOf(rs.getString("any_category")));
+                    ActivityCategory.valueOf(rs.getString("any_category")),
+                    status);
         }
         // A cluster is several plans of possibly several kinds: it has no one category to
-        // draw, and picking the first row's would label the whole group with it.
-        return new MapMarkerDto(MapMarkerDto.MarkerType.CLUSTER, lat, lng, count, null, null, null, null);
+        // draw, and picking the first row's would label the whole group with it. Its
+        // status is the loudest of them - one live plan makes the cluster worth looking at.
+        return new MapMarkerDto(MapMarkerDto.MarkerType.CLUSTER, lat, lng, count, null, null, null, null, status);
     }
 
     /**
@@ -140,21 +149,20 @@ public class ActivityMapRepository {
             FROM activities a
             JOIN locations l ON l.activity_id = a.activity_id
             WHERE l.geom_point IS NOT NULL
-              AND a.start_time >= :notBefore
               AND (a.title ILIKE :pattern OR l.address_text ILIKE :pattern)
+              AND %s
               AND %s
             ORDER BY distance_meters, a.start_time
             LIMIT :limit
-            """.formatted(ActivityVisibilitySql.VISIBLE_TO_VIEWER);
+            """.formatted(ActivityStatusSql.NOT_ENDED, ActivityVisibilitySql.VISIBLE_TO_VIEWER);
 
     public List<MapSearchResultDto> searchNearby(
-            String query, double focusLat, double focusLng, int limit, Instant notBefore, UUID viewerId) {
+            String query, double focusLat, double focusLng, int limit, UUID viewerId) {
 
         Map<String, Object> params = new HashMap<>();
         params.put("pattern", "%" + escapeLikeWildcards(query.strip()) + "%");
         params.put("focusLat", focusLat);
         params.put("focusLng", focusLng);
-        params.put("notBefore", Timestamp.from(notBefore));
         params.put("limit", Math.min(Math.max(limit, 1), MAX_SEARCH_RESULTS));
         params.put(ActivityVisibilitySql.VIEWER_ID_PARAM,
                 Objects.requireNonNull(viewerId, "viewerId is required to search the map"));

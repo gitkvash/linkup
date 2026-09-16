@@ -61,10 +61,17 @@ public class UserDirectoryService {
                         LinkedHashMap::new));
     }
 
-    /** Convenience for the common "id -> name or null" decoration. */
-    public Map<UUID, String> usernamesFor(Collection<UUID> userIds) {
+    /**
+     * Convenience for the common "id -> name or null" decoration.
+     * <p>
+     * Answers {@link UserSummary#name()}, so a friends list, a participant row and a
+     * notification all read the display name once someone sets one. The username is
+     * still what the search and the profile show, because that is the identifier people
+     * type; these lists are showing a person.
+     */
+    public Map<UUID, String> namesFor(Collection<UUID> userIds) {
         return findByIds(userIds).entrySet().stream()
-                .collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().username()));
+                .collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().name()));
     }
 
     /**
@@ -85,6 +92,7 @@ public class UserDirectoryService {
     }
 
     private static UserSummary toSummary(ge.kcamp.linkup.identity.entity.User user) {
-        return new UserSummary(user.getId(), user.getUsername());
+        return new UserSummary(
+                user.getId(), user.getUsername(), user.getDisplayName(), user.getBio());
     }
 }

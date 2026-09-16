@@ -108,7 +108,7 @@ public class GroupService {
         List<UUID> memberIds = groupMemberRepository.findByIdGroupId(groupId).stream()
                 .map(membership -> membership.getId().getUserId())
                 .toList();
-        Map<UUID, String> usernames = userDirectoryService.usernamesFor(memberIds);
+        Map<UUID, String> usernames = userDirectoryService.namesFor(memberIds);
 
         return memberIds.stream()
                 .map(id -> new GroupMemberSummary(

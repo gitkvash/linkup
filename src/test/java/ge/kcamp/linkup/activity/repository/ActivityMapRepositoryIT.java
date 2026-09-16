@@ -20,9 +20,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Instant;
 import java.time.ZonedDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 
@@ -71,7 +69,7 @@ class ActivityMapRepositoryIT extends AbstractIntegrationTest {
 
         BoundingBox bbox = new BoundingBox(40.0, 43.0, 43.0, 47.0);
         List<MapMarkerDto> markers = activityMapRepository.findClusteredMarkers(
-                bbox, 100.0, 2, Instant.now().minus(1, ChronoUnit.HOURS), creatorId);
+                bbox, 100.0, 2, creatorId);
 
         long clusterCount = markers.stream().filter(m -> m.type() == MapMarkerDto.MarkerType.CLUSTER).count();
         long pinCount = markers.stream().filter(m -> m.type() == MapMarkerDto.MarkerType.PIN).count();
@@ -91,7 +89,7 @@ class ActivityMapRepositoryIT extends AbstractIntegrationTest {
 
         BoundingBox bbox = new BoundingBox(41.0, 44.0, 42.0, 45.0);
         List<MapMarkerDto> markers = activityMapRepository.findClusteredMarkers(
-                bbox, 100.0, 2, Instant.now().minus(1, ChronoUnit.HOURS), creatorId);
+                bbox, 100.0, 2, creatorId);
 
         assertThat(markers).singleElement().satisfies(marker -> {
             assertThat(marker.type()).isEqualTo(MapMarkerDto.MarkerType.PIN);
@@ -109,7 +107,7 @@ class ActivityMapRepositoryIT extends AbstractIntegrationTest {
         createActivityAt(creatorId, "Bouldering", 41.7152, 44.8272, ActivityCategory.CLIMBING);
 
         List<MapSearchResultDto> results = activityMapRepository.searchNearby(
-                "coffee", 41.7151, 44.8271, 8, Instant.now().minus(1, ChronoUnit.HOURS), creatorId);
+                "coffee", 41.7151, 44.8271, 8, creatorId);
 
         // Case-insensitive, and the plan 50km away comes second rather than not at all:
         // search is how the user finds what the viewport isn't showing them.
@@ -128,7 +126,7 @@ class ActivityMapRepositoryIT extends AbstractIntegrationTest {
 
         // Unescaped, this is LIKE '%%%' - every future activity the caller can see.
         List<MapSearchResultDto> results = activityMapRepository.searchNearby(
-                "%", 41.7151, 44.8271, 8, Instant.now().minus(1, ChronoUnit.HOURS), creatorId);
+                "%", 41.7151, 44.8271, 8, creatorId);
 
         assertThat(results).isEmpty();
     }
@@ -143,7 +141,7 @@ class ActivityMapRepositoryIT extends AbstractIntegrationTest {
         UUID strangerId = UUID.randomUUID();
         UserContext.setUserId(strangerId);
         List<MapSearchResultDto> results = activityMapRepository.searchNearby(
-                "sauna", 41.7151, 44.8271, 8, Instant.now().minus(1, ChronoUnit.HOURS), strangerId);
+                "sauna", 41.7151, 44.8271, 8, strangerId);
 
         assertThat(results).isEmpty();
     }

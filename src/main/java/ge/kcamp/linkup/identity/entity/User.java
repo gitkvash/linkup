@@ -20,6 +20,17 @@ public class User {
     @Column(name = "username", length = 50, unique = true)
     private String username;
 
+    /**
+     * What this person calls themselves. Not unique and not an identifier - the username
+     * stays both - so every read falls back to the username when it is null, which it is
+     * for every account that has never set one.
+     */
+    @Column(name = "display_name", length = 50)
+    private String displayName;
+
+    @Column(name = "bio", length = 160)
+    private String bio;
+
     @Column(name = "password_hash", length = 255)
     private String passwordHash;
 
