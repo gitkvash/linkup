@@ -1,37 +1,23 @@
 package ge.kcamp.linkup.activity.command;
 
-import ge.kcamp.linkup.activity.ActivityCreatedEvent;
-import ge.kcamp.linkup.activity.ActivityFactory;
 import ge.kcamp.linkup.activity.CasualPlanSpec;
 import ge.kcamp.linkup.activity.StructuredEventSpec;
 import ge.kcamp.linkup.activity.entity.Activity;
 import ge.kcamp.linkup.activity.entity.Location;
-import ge.kcamp.linkup.activity.entity.Participant;
-import ge.kcamp.linkup.activity.entity.ParticipantId;
-import ge.kcamp.linkup.activity.enums.ParticipantStatus;
 import ge.kcamp.linkup.activity.exception.ActivityNotVisibleException;
-import ge.kcamp.linkup.activity.exception.InvalidGroupException;
-import ge.kcamp.linkup.activity.exception.InvalidInviteeException;
 import ge.kcamp.linkup.activity.repository.ActivityRepository;
 import ge.kcamp.linkup.activity.repository.LocationRepository;
-import ge.kcamp.linkup.activity.repository.ParticipantRepository;
 import ge.kcamp.linkup.nlp.NlpParserService;
 import ge.kcamp.linkup.nlp.ParsedActivityText;
-import ge.kcamp.linkup.social.GroupService;
-import ge.kcamp.linkup.social.SocialGraphService;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.Point;
 import org.locationtech.jts.geom.PrecisionModel;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
-import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -49,34 +35,29 @@ public class ActivityCommandHandler {
 
     private final ActivityRepository activityRepository;
     private final LocationRepository locationRepository;
-    private final ParticipantRepository participantRepository;
-    private final ActivityFactory activityFactory;
     private final NlpParserService nlpParserService;
-    private final SocialGraphService socialGraphService;
-    private final GroupService groupService;
-    private final ApplicationEventPublisher eventPublisher;
+    private final ActivityPersistenceService activityPersistenceService;
     private final GeometryFactory geometryFactory = new GeometryFactory(new PrecisionModel(), WGS84_SRID);
 
     public ActivityCommandHandler(
             ActivityRepository activityRepository,
             LocationRepository locationRepository,
-            ParticipantRepository participantRepository,
-            ActivityFactory activityFactory,
             NlpParserService nlpParserService,
-            SocialGraphService socialGraphService,
-            GroupService groupService,
-            ApplicationEventPublisher eventPublisher) {
+            ActivityPersistenceService activityPersistenceService) {
         this.activityRepository = activityRepository;
         this.locationRepository = locationRepository;
-        this.participantRepository = participantRepository;
-        this.activityFactory = activityFactory;
         this.nlpParserService = nlpParserService;
-        this.socialGraphService = socialGraphService;
-        this.groupService = groupService;
-        this.eventPublisher = eventPublisher;
+        this.activityPersistenceService = activityPersistenceService;
     }
 
-    @Transactional
+    /**
+     * Deliberately not {@code @Transactional}: {@link ActivityPersistenceService}'s own
+     * annotation opens the transaction, and only after the CoreNLP parse below has run.
+     * Wrapping this method would open it first and hold a pooled JDBC connection idle for
+     * the multi-second parse - see the comment on {@code hibernate.open-in-view} in
+     * application.yaml, and {@link ActivityPersistenceService}'s class Javadoc for why the
+     * split had to be a separate bean rather than a private method here.
+     */
     public Activity handle(CreateActivityFromTextCommand command) {
         ZoneId zone = command.zone();
         ParsedActivityText parsed = nlpParserService.parse(command.rawText(), zone);
@@ -102,20 +83,20 @@ public class ActivityCommandHandler {
         CasualPlanSpec spec =
                 new CasualPlanSpec(truncateTitle(parsed.title()), startTime, hasTime, locationText);
 
-        return createAndPersist(spec, command.creatorId(), command.visibility(), command.groupId(),
-                null, null, locationText, command.inviteeUserIds(), null);
+        return activityPersistenceService.createAndPersist(spec, command.creatorId(),
+                command.visibility(), command.groupId(), null, null, locationText,
+                command.inviteeUserIds(), null);
     }
 
-    @Transactional
     public Activity handle(CreateStructuredActivityCommand command) {
         StructuredEventSpec spec = new StructuredEventSpec(
                 command.title(), command.startTime(), command.endTime(), command.hasTime(),
                 command.addressText(), command.lat(), command.lng(),
                 command.repeatFrequency(), command.repeatInterval(), command.repeatUntil());
 
-        return createAndPersist(spec, command.creatorId(), command.visibility(), command.groupId(),
-                command.lat(), command.lng(), command.addressText(), command.inviteeUserIds(),
-                command.category());
+        return activityPersistenceService.createAndPersist(spec, command.creatorId(),
+                command.visibility(), command.groupId(), command.lat(), command.lng(),
+                command.addressText(), command.inviteeUserIds(), command.category());
     }
 
     /**
@@ -125,7 +106,7 @@ public class ActivityCommandHandler {
      * sends. Participants are untouched: who is coming is changed through join/respond,
      * and re-deriving it here would resurrect invitations people had already declined.
      * <p>
-     * No event is published. {@link ActivityCreatedEvent} means "a new plan exists" -
+     * No event is published. {@code ActivityCreatedEvent} means "a new plan exists" -
      * feed fan-out and an ACTIVITY_INVITE notification both follow from it, and neither
      * is true of an edit. One consequence to know about: a timeline entry keeps the
      * Redis score it was written with, so moving a plan's start time re-sorts it in the
@@ -135,7 +116,7 @@ public class ActivityCommandHandler {
     public Activity handle(UpdateActivityCommand command) {
         Activity activity = requireOwned(command.activityId(), command.actorId());
 
-        UUID audienceGroupId = resolveGroupId(
+        UUID audienceGroupId = activityPersistenceService.resolveGroupId(
                 command.actorId(), command.visibility(), command.groupId());
 
         activity.setTitle(command.title());
@@ -245,113 +226,5 @@ public class ActivityCommandHandler {
         }
         int end = Character.isHighSurrogate(value.charAt(max - 1)) ? max - 1 : max;
         return value.substring(0, end);
-    }
-
-    private Activity createAndPersist(
-            ge.kcamp.linkup.activity.ActivitySpec spec,
-            UUID creatorId,
-            ge.kcamp.linkup.activity.enums.ActivityVisibility visibility,
-            UUID groupId,
-            Double lat,
-            Double lng,
-            String addressText,
-            List<UUID> inviteeUserIds,
-            ge.kcamp.linkup.activity.enums.ActivityCategory category) {
-
-        List<UUID> invitees = inviteeUserIds == null ? List.of() : inviteeUserIds;
-        requireFriends(creatorId, invitees);
-
-        UUID audienceGroupId = resolveGroupId(creatorId, visibility, groupId);
-        Activity activity = activityFactory.createFrom(spec, creatorId, visibility, audienceGroupId, category);
-        Activity saved = activityRepository.save(activity);
-
-        // A row is written when there are coordinates OR just an address, so a text-created
-        // plan keeps its place name. Coordinates stay null in that case, and every reader
-        // has to cope with that (see Location.geomPoint).
-        boolean hasCoordinates = lat != null && lng != null;
-        boolean hasAddress = addressText != null && !addressText.isBlank();
-        if (hasCoordinates || hasAddress) {
-            Point point = hasCoordinates
-                    ? geometryFactory.createPoint(new Coordinate(lng, lat))
-                    : null;
-            Location location = Location.builder()
-                    .activity(saved)
-                    .geomPoint(point)
-                    .addressText(addressText)
-                    .build();
-            locationRepository.save(location);
-        }
-
-        participantRepository.save(Participant.builder()
-                .id(new ParticipantId(saved.getId(), creatorId))
-                .activity(saved)
-                .status(ParticipantStatus.JOINED)
-                .build());
-
-        for (UUID inviteeId : invitees) {
-            if (inviteeId.equals(creatorId)) {
-                continue;
-            }
-            participantRepository.save(Participant.builder()
-                    .id(new ParticipantId(saved.getId(), inviteeId))
-                    .activity(saved)
-                    .status(ParticipantStatus.INVITED)
-                    .build());
-        }
-
-        eventPublisher.publishEvent(new ActivityCreatedEvent(
-                saved.getId(), creatorId, saved.getTitle(), saved.getStartTime(), invitees,
-                audienceGroupId, Instant.now()));
-
-        return saved;
-    }
-
-    /**
-     * The group a GROUP-visibility plan is shared with, or null for every other
-     * visibility.
-     *
-     * <p>Normalises rather than rejects when a group id arrives alongside PUBLIC, FRIENDS
-     * or PRIVATE: the visibility is what the user chose, the group id is a leftover from a
-     * form they changed their mind on, and the database would refuse the row anyway
-     * ({@code chk_activities_group_visibility}) with a 409 that explains nothing.
-     *
-     * <p>Membership is required, not ownership - a group exists so its members can make
-     * plans in it, not just whoever created it.
-     */
-    private UUID resolveGroupId(
-            UUID creatorId, ge.kcamp.linkup.activity.enums.ActivityVisibility visibility, UUID groupId) {
-
-        if (visibility != ge.kcamp.linkup.activity.enums.ActivityVisibility.GROUP) {
-            return null;
-        }
-        if (groupId == null) {
-            throw InvalidGroupException.missing();
-        }
-        if (!groupService.isMember(groupId, creatorId)) {
-            throw InvalidGroupException.notAMember();
-        }
-        return groupId;
-    }
-
-    /**
-     * Invitees must be accepted friends of the creator. Previously any UUID was written
-     * straight into {@code participants}: an id belonging to nobody blew up as a foreign
-     * key violation surfaced to the caller as a 500, and a valid id belonging to a
-     * stranger was a working way to push an invitation at anyone.
-     */
-    private void requireFriends(UUID creatorId, List<UUID> inviteeIds) {
-        if (inviteeIds.isEmpty()) {
-            return;
-        }
-        Set<UUID> allowed = Set.copyOf(socialGraphService.getAcceptedFriendIds(creatorId));
-        long rejected = inviteeIds.stream()
-                .filter(id -> !id.equals(creatorId))
-                .filter(id -> !allowed.contains(id))
-                .distinct()
-                .count();
-
-        if (rejected > 0) {
-            throw new InvalidInviteeException((int) rejected);
-        }
     }
 }
