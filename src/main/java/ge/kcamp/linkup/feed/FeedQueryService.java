@@ -124,6 +124,7 @@ public class FeedQueryService {
                 creatorUsername,
                 item.title(),
                 item.startTime(),
-                item.addressText());
+                item.addressText(),
+                item.status());
     }
 }
