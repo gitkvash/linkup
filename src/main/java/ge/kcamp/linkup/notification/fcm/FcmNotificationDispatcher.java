@@ -65,6 +65,10 @@ public class FcmNotificationDispatcher implements NotificationDispatcher {
                     if (message.metadata() != null) {
                         messageBuilder.putAllData(message.metadata());
                     }
+                    // The type, so a push that lands while the app is open can be
+                    // told apart - an invitation opens an Accept/Decline prompt,
+                    // other types only refresh the Alerts list.
+                    messageBuilder.putData("type", message.type());
                     return messageBuilder.build();
                 })
                 .toList();

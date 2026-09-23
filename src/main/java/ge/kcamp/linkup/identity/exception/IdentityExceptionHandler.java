@@ -47,4 +47,13 @@ public class IdentityExceptionHandler {
             GoogleAuthenticationFailedException ex) {
         return ApiError.of(HttpStatus.UNAUTHORIZED, ex.getMessage(), ApiError.INVALID_CREDENTIALS);
     }
+
+    /**
+     * Plain 401, no {@code INVALID_CREDENTIALS}: nothing was typed wrong, so the client
+     * should sign out rather than show a password error.
+     */
+    @ExceptionHandler(SessionExpiredException.class)
+    public ResponseEntity<Map<String, Object>> handleSessionExpired(SessionExpiredException ex) {
+        return ApiError.of(HttpStatus.UNAUTHORIZED, ex.getMessage(), ApiError.SESSION_EXPIRED);
+    }
 }

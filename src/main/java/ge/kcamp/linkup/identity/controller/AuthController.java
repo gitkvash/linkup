@@ -4,6 +4,7 @@ import ge.kcamp.linkup.identity.IdentityService;
 import ge.kcamp.linkup.identity.dto.AuthResponse;
 import ge.kcamp.linkup.identity.dto.GoogleLoginRequest;
 import ge.kcamp.linkup.identity.dto.LoginRequest;
+import ge.kcamp.linkup.identity.dto.RefreshRequest;
 import ge.kcamp.linkup.identity.dto.RegisterRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -36,5 +37,14 @@ public class AuthController {
     public ResponseEntity<AuthResponse> loginWithGoogle(@Valid @RequestBody GoogleLoginRequest request) {
         AuthResponse response = identityService.loginWithGoogle(request.idToken());
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * A new session for an old one. The client calls this when a request comes back 401
+     * and retries the request with the new token; only a refusal here signs it out.
+     */
+    @PostMapping("/refresh")
+    public ResponseEntity<AuthResponse> refresh(@Valid @RequestBody RefreshRequest request) {
+        return ResponseEntity.ok(identityService.refresh(request.refreshToken()));
     }
 }

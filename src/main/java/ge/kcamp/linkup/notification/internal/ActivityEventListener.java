@@ -1,6 +1,7 @@
 package ge.kcamp.linkup.notification.internal;
 
 import ge.kcamp.linkup.activity.ActivityCreatedEvent;
+import ge.kcamp.linkup.activity.ActivityInvitationsSentEvent;
 import ge.kcamp.linkup.identity.UserDirectoryService;
 import ge.kcamp.linkup.identity.UserSummary;
 import ge.kcamp.linkup.notification.NotificationDispatcher;
@@ -12,7 +13,10 @@ import org.springframework.stereotype.Component;
 
 import java.time.format.DateTimeFormatter;
 import java.time.format.FormatStyle;
+import java.time.ZonedDateTime;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Observer-pattern payoff: neither {@code activity} nor {@code social} knows this class
@@ -44,13 +48,40 @@ public class ActivityEventListener {
 
     @ApplicationModuleListener
     public void onActivityCreated(ActivityCreatedEvent event) {
-        for (var inviteeId : event.invitedUserIds()) {
+        notifyInvitees(event.activityId(), event.creatorId(), event.title(),
+                event.startTime(), event.invitedUserIds());
+    }
+
+    /** More people invited to a plan that already existed - the same message they'd get at creation. */
+    @ApplicationModuleListener
+    public void onInvitationsSent(ActivityInvitationsSentEvent event) {
+        notifyInvitees(event.activityId(), event.inviterId(), event.title(),
+                event.startTime(), event.invitedUserIds());
+    }
+
+    /**
+     * Names the host in the title: "Nino invited you" is a reason to open it, where
+     * "You're invited" from nobody in particular is not. The dedupe key is
+     * type:recipient:activity, so an invitation redelivered after a restart is still one row.
+     */
+    private void notifyInvitees(
+            UUID activityId, UUID hostId, String title, ZonedDateTime startTime, List<UUID> invitees) {
+        if (invitees.isEmpty()) {
+            return;
+        }
+        String host = userDirectoryService.findById(hostId)
+                .map(UserSummary::username)
+                .orElse("Someone");
+        for (var inviteeId : invitees) {
+            if (inviteeId.equals(hostId)) {
+                continue;
+            }
             notificationDispatcher.dispatch(new NotificationMessage(
                     inviteeId,
                     "ACTIVITY_INVITE",
-                    "You're invited: " + event.title(),
-                    "Starts " + WHEN.format(event.startTime()),
-                    Map.of("activityId", event.activityId().toString())
+                    host + " invited you: " + title,
+                    "Starts " + WHEN.format(startTime),
+                    Map.of("activityId", activityId.toString(), "otherUserId", hostId.toString())
             ));
         }
     }

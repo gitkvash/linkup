@@ -8,9 +8,13 @@ import java.util.UUID;
  *                   email because it is never asked for one, so the client uses this to
  *                   offer the new user a chance to pick their own - once, on the way in,
  *                   rather than leaving them to discover "giorgik1" in their profile.
+ * @param refreshToken long-lived, and only accepted by {@code POST /auth/refresh}. The
+ *                     client trades it for a new pair when {@code token} expires, which
+ *                     is what keeps someone signed in for months rather than a day.
  */
 public record AuthResponse(
         String token,
+        String refreshToken,
         UUID userId,
         String username,
         boolean newAccount

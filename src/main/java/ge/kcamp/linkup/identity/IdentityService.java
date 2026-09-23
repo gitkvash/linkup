@@ -4,6 +4,7 @@ import ge.kcamp.linkup.identity.dto.AuthResponse;
 import ge.kcamp.linkup.identity.entity.User;
 import ge.kcamp.linkup.identity.exception.AuthenticationFailedException;
 import ge.kcamp.linkup.identity.exception.DuplicateUsernameException;
+import ge.kcamp.linkup.identity.exception.SessionExpiredException;
 import ge.kcamp.linkup.identity.repository.UserRepository;
 import ge.kcamp.linkup.identity.security.GoogleTokenVerifier;
 import ge.kcamp.linkup.identity.security.JwtUtil;
@@ -13,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
+import java.util.UUID;
 
 @Service
 public class IdentityService {
@@ -81,6 +83,20 @@ public class IdentityService {
         return issueToken(user, existing.isEmpty());
     }
 
+    /**
+     * Trades a refresh token for a new access token and a new refresh token. The account
+     * is re-read rather than trusted from the token, so a deleted account can't keep
+     * minting sessions, and the new access token carries the current username.
+     */
+    @Transactional(readOnly = true)
+    public AuthResponse refresh(String refreshToken) {
+        UUID userId = jwtUtil.parseRefreshUserId(refreshToken)
+                .orElseThrow(SessionExpiredException::new);
+        User user = userRepository.findById(userId)
+                .orElseThrow(SessionExpiredException::new);
+        return issueToken(user, false);
+    }
+
     private User createGoogleUser(GoogleTokenVerifier.Result verified) {
         User user = new User();
         user.setGoogleId(verified.subject());
@@ -121,6 +137,7 @@ public class IdentityService {
 
     private AuthResponse issueToken(User user, boolean newAccount) {
         String token = jwtUtil.generateToken(user.getId(), user.getUsername());
-        return new AuthResponse(token, user.getId(), user.getUsername(), newAccount);
+        String refreshToken = jwtUtil.generateRefreshToken(user.getId());
+        return new AuthResponse(token, refreshToken, user.getId(), user.getUsername(), newAccount);
     }
 }

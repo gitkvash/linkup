@@ -40,16 +40,35 @@ public class JwtUtil {
      */
     private final JwtParser parser;
     private final long expirationMs;
+    private final long refreshExpirationMs;
 
+    /**
+     * Which of the two kinds a token is. Both are signed with the same key, so without
+     * this a refresh token - which lives for months - would be accepted as a bearer
+     * token on every endpoint. A token with no claim at all predates refresh tokens and
+     * is an access token.
+     */
+    private static final String TYPE_CLAIM = "typ";
+    private static final String ACCESS = "access";
+    private static final String REFRESH = "refresh";
+
+    /**
+     * @param refreshExpirationMs how long a refresh token lasts. Every refresh hands back
+     *                            a new one, so the window slides: a person who opens the
+     *                            app at least once in that time is never signed out. The
+     *                            access token stays short so a leaked one expires quickly.
+     */
     public JwtUtil(
             @Value("${linkup.security.jwt.secret}") String base64Secret,
             @Value("${linkup.security.jwt.expiration-ms:86400000}") long expirationMs,
+            @Value("${linkup.security.jwt.refresh-expiration-ms:15552000000}") long refreshExpirationMs,
             Environment environment) {
 
         byte[] secret = decodeAndValidate(base64Secret, environment);
         this.key = Keys.hmacShaKeyFor(secret);
         this.parser = Jwts.parserBuilder().setSigningKey(this.key).build();
         this.expirationMs = expirationMs;
+        this.refreshExpirationMs = refreshExpirationMs;
     }
 
     private static byte[] decodeAndValidate(String base64Secret, Environment environment) {
@@ -93,8 +112,20 @@ public class JwtUtil {
         return Jwts.builder()
                 .setSubject(userId.toString())
                 .claim("username", username)
+                .claim(TYPE_CLAIM, ACCESS)
                 .setIssuedAt(new Date())
                 .setExpiration(new Date(System.currentTimeMillis() + expirationMs))
+                .signWith(key)
+                .compact();
+    }
+
+    /** Only good for {@code POST /auth/refresh}; {@link #parseUserId} refuses it. */
+    public String generateRefreshToken(UUID userId) {
+        return Jwts.builder()
+                .setSubject(userId.toString())
+                .claim(TYPE_CLAIM, REFRESH)
+                .setIssuedAt(new Date())
+                .setExpiration(new Date(System.currentTimeMillis() + refreshExpirationMs))
                 .signWith(key)
                 .compact();
     }
@@ -113,9 +144,22 @@ public class JwtUtil {
      * this key; the caller cannot tell those apart, which is deliberate.
      */
     public Optional<UUID> parseUserId(String token) {
+        return parseSubject(token, false);
+    }
+
+    /** The user a refresh token was issued to, if it is one, valid and unexpired. */
+    public Optional<UUID> parseRefreshUserId(String token) {
+        return parseSubject(token, true);
+    }
+
+    private Optional<UUID> parseSubject(String token, boolean refresh) {
         try {
-            String subject = parser.parseClaimsJws(token).getBody().getSubject();
-            return Optional.of(UUID.fromString(subject));
+            Claims claims = parser.parseClaimsJws(token).getBody();
+            boolean isRefresh = REFRESH.equals(claims.get(TYPE_CLAIM, String.class));
+            if (isRefresh != refresh) {
+                return Optional.empty();
+            }
+            return Optional.of(UUID.fromString(claims.getSubject()));
         } catch (RuntimeException e) {
             return Optional.empty();
         }

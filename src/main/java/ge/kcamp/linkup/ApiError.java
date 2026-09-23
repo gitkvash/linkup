@@ -37,6 +37,7 @@ public final class ApiError {
     public static final String INTERNAL_ERROR = "INTERNAL_ERROR";
     public static final String INVALID_CREDENTIALS = "INVALID_CREDENTIALS";
     public static final String USERNAME_TAKEN = "USERNAME_TAKEN";
+    public static final String SESSION_EXPIRED = "SESSION_EXPIRED";
 
     public static ResponseEntity<Map<String, Object>> of(HttpStatus status, String message) {
         return of(status, message, null, null);

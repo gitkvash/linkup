@@ -1,0 +1,14 @@
+-- Which plan a notification is about.
+--
+-- The dispatcher has always sent activityId in the push/SSE payload, but the stored row
+-- kept only type/title/body - so the Alerts list could send an invitation to a tab, never
+-- to the plan, and could not offer Accept/Decline on the row itself.
+--
+-- Deliberately not a foreign key. A cancelled plan leaves its notifications behind, and
+-- the client already treats an id that answers 404 as "this plan is gone". A cascade here
+-- would instead make the notification vanish from under the reader, or (SET NULL) turn it
+-- into a row that silently stops being tappable.
+--
+-- No grant or policy change: V17's table-level grants cover a new column, and the V15
+-- policies key on recipient_user_id, which this does not touch.
+ALTER TABLE notifications ADD COLUMN activity_id UUID;

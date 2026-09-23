@@ -103,6 +103,16 @@ check "a username with spaces is a 400" 400 "$(code -X PATCH "$API/users/me" -H 
 has "register says the account is new" "$RA" '"newAccount":true'
 has "login says it is not" "$(curl -s -X POST "$API/auth/login" -H "$JSON" -d "{\"username\":\"$A\",\"password\":\"password123\"}")" '"newAccount":false'
 
+# AuthInterceptor trades refreshToken for a new pair on a 401 and only signs out if this
+# refuses. The access token lives a day, so without these the app signs everyone out daily.
+RT=$(jsonf "$LOGIN" refreshToken)
+has "login returns a refreshToken" "$LOGIN" '"refreshToken"'
+REFRESHED=$(curl -s -X POST "$API/auth/refresh" -H "$JSON" -d "{\"refreshToken\":\"$RT\"}")
+has "POST /auth/refresh returns a new token" "$REFRESHED" '"token"'
+has "and a new refresh token, so the window slides" "$REFRESHED" '"refreshToken"'
+check "a refresh token is not a bearer token" 401 "$(code -H "Authorization: Bearer $RT" "$API/users/me")"
+check "an access token cannot refresh" 401 "$(code -X POST "$API/auth/refresh" -H "$JSON" -d "{\"refreshToken\":\"$TA\"}")"
+
 echo "== activity: what activity_api.dart calls =="
 # The client sends startTime as DateTime.toUtc().toIso8601String() - milliseconds, Z suffix.
 CREATE=$(curl -s -X POST "$API/activities" -H "$JSON" -H "$AUTHA" -d '{
@@ -168,6 +178,24 @@ case "$JOINCODES" in
 esac
 has "and the headcount counts the joiner once" "$(curl -s -H "$AUTHA" "$API/activities/$AID")" '"participantCount":2'
 check "DELETE /activities/{id}/join" 204 "$(code -X DELETE -H "$AUTHB" "$API/activities/$AID/join")"
+
+# Create with no place at all (the form's place is optional), then invite B to it after
+# the fact - the invite sheet on Activity Detail. B gets it as a pending invitation and a
+# notification row that names the plan, which is what the Alerts row's Accept/Decline and
+# its tap-through both key on.
+NOPLACE=$(curl -s -X POST "$API/activities" -H "$JSON" -H "$AUTHA" -d '{
+  "title":"No place yet","startTime":"2031-03-05T18:00:00.000Z","hasTime":true,
+  "lat":null,"lng":null,"addressText":null,"visibility":"PRIVATE","inviteeUserIds":[]}')
+NPID=$(jsonf "$NOPLACE" id)
+if [ -n "$NPID" ]; then ok "POST /activities accepts a plan with no place"; else bad "create without place ($NOPLACE)"; fi
+has "POST /activities/{id}/invites answers with participants" "$(curl -s -X POST "$API/activities/$NPID/invites" -H "$JSON" -H "$AUTHA" -d "{\"userIds\":[\"$IDB\"]}")" '"INVITED"'
+has "the invitee sees it in /activities/invited" "$(curl -s -H "$AUTHB" "$API/activities/invited")" "$NPID"
+check "someone else cannot invite to your plan" 404 "$(code -X POST "$API/activities/$NPID/invites" -H "$JSON" -H "$AUTHB" -d "{\"userIds\":[\"$IDA\"]}")"
+check "an empty invite list is a 400" 400 "$(code -X POST "$API/activities/$NPID/invites" -H "$JSON" -H "$AUTHA" -d '{"userIds":[]}')"
+sleep 1
+has "the invitation notification carries activityId" "$(curl -s -H "$AUTHB" "$API/notifications")" "\"activityId\":\"$NPID\""
+has "POST /activities/{id}/respond?going=true accepts it" "$(curl -s -X POST -H "$AUTHB" "$API/activities/$NPID/respond?going=true")" 'JOINED'
+check "cleaning up the place-less plan" 204 "$(code -X DELETE -H "$AUTHA" "$API/activities/$NPID")"
 
 # ActivityApi.startActivity / endActivity - the host's two lifecycle controls. Both
 # answer with the read model, so the detail screen re-renders without a second GET.
@@ -244,6 +272,10 @@ echo "== feed: what feed_api.dart calls =="
 FEED=$(curl -s -H "$AUTHB" "$API/feed?limit=20")
 has "GET /feed returns items/nextCursor" "$FEED" '"items"'
 has "feed items carry creatorUsername" "$FEED" '"creatorUsername"'
+# The card's status chip renders whatever this says. Without the field the "All"
+# tab has to guess from startTime, which calls a plan that is happening right now
+# over -- and the guess is invisible in the client's own green tests.
+has "feed items carry status" "$FEED" '"status"'
 
 echo "== notifications: what notification_api.dart calls =="
 NOTIFS=$(curl -s -H "$AUTHB" "$API/notifications")

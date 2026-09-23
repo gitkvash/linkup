@@ -43,4 +43,13 @@ public class Notification {
      */
     @Column(name = "dedupe_key", length = 200)
     private String dedupeKey;
+
+    /**
+     * The plan this is about, when it is about one (V27). Lets a stored row open the
+     * plan - and an invitation be answered from the Alerts list - instead of only
+     * pointing at a tab. Not a foreign key: a cancelled plan leaves the id behind, and
+     * the client already treats an id that 404s as "this plan is gone".
+     */
+    @Column(name = "activity_id")
+    private UUID activityId;
 }

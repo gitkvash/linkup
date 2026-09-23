@@ -9,6 +9,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Persists an in-app row (and logs), so "list my notifications" is real.
@@ -56,7 +57,22 @@ public class LoggingNotificationDispatcher implements NotificationDispatcher {
         notification.setTitle(message.title());
         notification.setBody(message.body());
         notification.setDedupeKey(dedupeKey);
+        notification.setActivityId(activityIdOf(message));
         notificationRepository.save(notification);
+    }
+
+    /** The {@code activityId} metadata entry, if there is one and it is a UUID. */
+    private static UUID activityIdOf(NotificationMessage message) {
+        Map<String, String> metadata = message.metadata();
+        String raw = metadata == null ? null : metadata.get("activityId");
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(raw);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     /**

@@ -98,6 +98,9 @@ linkup:
       # Intentionally no default. See spring.profiles.default above.
       secret: ${LINKUP_JWT_SECRET:}
       expiration-ms: ${LINKUP_JWT_EXPIRATION_MS:86400000}
+      # 180 days, and sliding: every POST /auth/refresh issues a fresh one, so only
+      # someone who hasn't opened the app for half a year has to sign in again.
+      refresh-expiration-ms: ${LINKUP_JWT_REFRESH_EXPIRATION_MS:15552000000}
     google:
       # The Web OAuth client ID from Google Cloud Console - not secret, but still
       # externalized. This is the audience GoogleTokenVerifier checks ID tokens

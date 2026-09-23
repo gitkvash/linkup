@@ -159,8 +159,10 @@ public class ActivityPersistenceService {
      * straight into {@code participants}: an id belonging to nobody blew up as a foreign
      * key violation surfaced to the caller as a 500, and a valid id belonging to a
      * stranger was a working way to push an invitation at anyone.
+     * <p>
+     * Public so inviting people to an existing plan goes through the same rule.
      */
-    private void requireFriends(UUID creatorId, List<UUID> inviteeIds) {
+    public void requireFriends(UUID creatorId, List<UUID> inviteeIds) {
         if (inviteeIds.isEmpty()) {
             return;
         }

@@ -12,6 +12,7 @@ import ge.kcamp.linkup.activity.command.DeleteActivityCommand;
 import ge.kcamp.linkup.activity.command.UpdateActivityCommand;
 import ge.kcamp.linkup.activity.dto.CreateActivityFromTextRequest;
 import ge.kcamp.linkup.activity.dto.CreateStructuredActivityRequest;
+import ge.kcamp.linkup.activity.dto.InviteRequest;
 import ge.kcamp.linkup.activity.dto.ParticipationDto;
 import ge.kcamp.linkup.activity.dto.UpdateActivityRequest;
 import ge.kcamp.linkup.activity.entity.Activity;
@@ -134,6 +135,17 @@ public class ActivityController {
     public ResponseEntity<List<ActivityParticipant>> getParticipants(@PathVariable UUID id) {
         return ResponseEntity.ok(
                 participationService.listParticipants(id, UserContext.getUserId()));
+    }
+
+    /**
+     * Invite more friends to a plan that already exists. Host only; answers with the
+     * participant list so the detail screen can show who was added without a second GET.
+     */
+    @PostMapping("/{id}/invites")
+    public ResponseEntity<List<ActivityParticipant>> invite(
+            @PathVariable UUID id, @Valid @RequestBody InviteRequest request) {
+        return ResponseEntity.ok(
+                participationService.invite(id, UserContext.getUserId(), request.userIds()));
     }
 
     /** Idempotent: joining something you're already in is a no-op, not an error. */

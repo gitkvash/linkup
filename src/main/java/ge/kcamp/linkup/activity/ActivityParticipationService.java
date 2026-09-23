@@ -1,7 +1,9 @@
 package ge.kcamp.linkup.activity;
 
+import ge.kcamp.linkup.activity.command.ActivityPersistenceService;
 import ge.kcamp.linkup.activity.entity.Activity;
 import ge.kcamp.linkup.activity.entity.Participant;
+import ge.kcamp.linkup.activity.entity.ParticipantId;
 import ge.kcamp.linkup.activity.enums.ParticipantStatus;
 import ge.kcamp.linkup.activity.exception.ActivityNotVisibleException;
 import ge.kcamp.linkup.activity.query.ActivityQueryRepository;
@@ -9,12 +11,16 @@ import ge.kcamp.linkup.activity.repository.ActivityRepository;
 import ge.kcamp.linkup.activity.repository.ParticipantRepository;
 import ge.kcamp.linkup.identity.UserDirectoryService;
 import ge.kcamp.linkup.identity.UserSummary;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Joining, leaving, and answering an invitation.
@@ -30,16 +36,22 @@ public class ActivityParticipationService {
     private final ParticipantRepository participantRepository;
     private final ActivityQueryRepository activityQueryRepository;
     private final UserDirectoryService userDirectoryService;
+    private final ActivityPersistenceService activityPersistenceService;
+    private final ApplicationEventPublisher eventPublisher;
 
     public ActivityParticipationService(
             ActivityRepository activityRepository,
             ParticipantRepository participantRepository,
             ActivityQueryRepository activityQueryRepository,
-            UserDirectoryService userDirectoryService) {
+            UserDirectoryService userDirectoryService,
+            ActivityPersistenceService activityPersistenceService,
+            ApplicationEventPublisher eventPublisher) {
         this.activityRepository = activityRepository;
         this.participantRepository = participantRepository;
         this.activityQueryRepository = activityQueryRepository;
         this.userDirectoryService = userDirectoryService;
+        this.activityPersistenceService = activityPersistenceService;
+        this.eventPublisher = eventPublisher;
     }
 
     /**
@@ -75,6 +87,51 @@ public class ActivityParticipationService {
         requireVisible(activityId, userId);
         return upsert(
                 activityId, userId, going ? ParticipantStatus.JOINED : ParticipantStatus.DECLINED);
+    }
+
+    /**
+     * Invites more of the host's friends to a plan that already exists, and answers with
+     * the updated participant list.
+     * <p>
+     * Host only - the same rule the {@code participants} insert policy enforces - and a
+     * non-host gets the 404 editing gives. Anyone who already has a row (invited, going,
+     * or declined) is skipped rather than reset: re-inviting someone who said no would
+     * turn their answer back into a question, and notify them about it.
+     */
+    @Transactional
+    public List<ActivityParticipant> invite(UUID activityId, UUID inviterId, List<UUID> userIds) {
+        Activity activity = activityRepository.findById(activityId)
+                .filter(found -> found.getCreatorId().equals(inviterId))
+                .orElseThrow(ActivityNotVisibleException::new);
+
+        activityPersistenceService.requireFriends(inviterId, userIds);
+
+        Set<UUID> existing = participantRepository.findByIdActivityIdOrderByStatusAsc(activityId)
+                .stream()
+                .map(participant -> participant.getId().getUserId())
+                .collect(Collectors.toSet());
+
+        List<UUID> added = userIds.stream()
+                .distinct()
+                .filter(id -> !id.equals(inviterId))
+                .filter(id -> !existing.contains(id))
+                .toList();
+
+        for (UUID inviteeId : added) {
+            participantRepository.save(Participant.builder()
+                    .id(new ParticipantId(activityId, inviteeId))
+                    .activity(activity)
+                    .status(ParticipantStatus.INVITED)
+                    .build());
+        }
+
+        if (!added.isEmpty()) {
+            eventPublisher.publishEvent(new ActivityInvitationsSentEvent(
+                    activityId, inviterId, activity.getTitle(), activity.getStartTime(),
+                    added, Instant.now()));
+        }
+
+        return listParticipants(activityId, inviterId);
     }
 
     /** Who's involved, with their names, for the detail screen. */
