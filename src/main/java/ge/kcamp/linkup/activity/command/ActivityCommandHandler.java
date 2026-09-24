@@ -70,6 +70,12 @@ public class ActivityCommandHandler {
         // is still a specific time worth showing. Only a day-only match (e.g. "tomorrow",
         // defaulted to a guessed evening hour) should hide the clock.
         boolean hasTime = parsed.startTime().isEmpty() || parsed.hasExplicitTime();
+        // A date-only plan is stored at the user's local midnight, as the form and edit
+        // screens send it, not at the parser's guessed hour: the zone isn't stored, so
+        // "start plus a day" is the only way ActivityStatusResolver can find its day's end.
+        if (!hasTime) {
+            startTime = startTime.withZoneSameInstant(zone).toLocalDate().atStartOfDay(zone);
+        }
 
         // Both are cut to their column widths. The title is whatever is left of the
         // user's own sentence once the time and place are stripped, and the client lets

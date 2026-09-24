@@ -109,10 +109,18 @@ public final class ActivityStatusResolver {
      * When an untouched plan is over. A plan with no clock time runs to the end of its
      * day rather than to a two-hour window from midnight, since the day is all the user
      * actually said.
+     * <p>
+     * The end of its day is a day after its start, not midnight in the timestamp's zone.
+     * The creator's zone is not stored, and a {@code timestamptz} comes back from
+     * Postgres in UTC: taking the date there put a Tbilisi plan's end at 04:00 local on
+     * its own day, so every all-day plan east of UTC read as over by breakfast. Every
+     * create and edit path stores a date-only plan at the creator's local midnight
+     * (see {@code ActivityCommandHandler}), so start plus a day is that day's end
+     * wherever the plan was made - an hour off only across a DST change.
      */
     private static ZonedDateTime autoEnd(Lifecycle plan, ZonedDateTime occurrence) {
         if (!plan.hasTime()) {
-            return occurrence.toLocalDate().plusDays(1).atStartOfDay(occurrence.getZone());
+            return occurrence.plusDays(1);
         }
         return occurrence.plus(duration(plan));
     }

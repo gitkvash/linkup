@@ -89,6 +89,24 @@ class ActivityStatusResolverTest {
     }
 
     @Test
+    void aDateOnlyPlanEastOfUtcRunsToTheEndOfItsOwnDayNotUtcs() {
+        // Stored at Tbilisi midnight and read back from Postgres in UTC, i.e. 20:00Z the
+        // evening before. Taking the date in the timestamp's zone ended it at 04:00 local
+        // on its own day.
+        ZonedDateTime tbilisiMidnightInUtc = ZonedDateTime.parse("2031-03-03T20:00:00Z");
+        Lifecycle allDay = new Lifecycle(
+                tbilisiMidnightInUtc, null, false, null, null, null, null, null);
+
+        ZonedDateTime tbilisiMidday = ZonedDateTime.parse("2031-03-04T08:00:00Z");
+        assertThat(ActivityStatusResolver.resolve(allDay, tbilisiMidday))
+                .isEqualTo(ActivityStatus.UPCOMING);
+        assertThat(ActivityStatusResolver.resolve(allDay, tbilisiMidnightInUtc.plusDays(1).minusMinutes(1)))
+                .isEqualTo(ActivityStatus.UPCOMING);
+        assertThat(ActivityStatusResolver.resolve(allDay, tbilisiMidnightInUtc.plusDays(1)))
+                .isEqualTo(ActivityStatus.ENDED);
+    }
+
+    @Test
     void aRepeatingPlanIsNotEndedForeverByItsFirstOccurrence() {
         // The row stores the rule and the first occurrence; nothing materialises the
         // rest, so reading start_time literally would end a weekly plan permanently two

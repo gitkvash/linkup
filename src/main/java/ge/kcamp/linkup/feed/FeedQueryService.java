@@ -125,6 +125,11 @@ public class FeedQueryService {
                 item.title(),
                 item.startTime(),
                 item.addressText(),
-                item.status());
+                item.status(),
+                item.category(),
+                item.hasTime(),
+                item.activityType(),
+                item.repeatFrequency(),
+                item.repeatInterval());
     }
 }

@@ -20,11 +20,10 @@ public final class ActivityStatusSql {
      * Requires the {@code activities} table to be aliased {@code a}. Wrapped in
      * parentheses so it can be AND-ed into any WHERE clause safely.
      * <p>
-     * {@code date_trunc} on a {@code timestamptz} truncates in the server's time zone
-     * rather than the one the plan was created in, so a date-only plan can end up to a
-     * few hours early or late for a user who is elsewhere. That is the cost of not
-     * storing the zone; the resolver, which has the offset the row was written with, does
-     * not pay it.
+     * A date-only plan ends a day after its start, which is stored at the creator's local
+     * midnight - the same rule the resolver uses. Not {@code date_trunc('day', ...)}:
+     * that truncates in the server's zone (UTC), which ended a Tbilisi plan at 04:00 on
+     * its own day.
      */
     public static final String NOT_ENDED = """
             (
@@ -42,7 +41,7 @@ public final class ActivityStatusSql {
                                 CASE WHEN a.end_time > a.start_time
                                      THEN a.end_time - a.start_time
                                      ELSE interval '2 hours' END)
-                            ELSE date_trunc('day', a.start_time) + interval '1 day'
+                            ELSE a.start_time + interval '1 day'
                         END)
                 )
             )

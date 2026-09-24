@@ -276,6 +276,11 @@ has "feed items carry creatorUsername" "$FEED" '"creatorUsername"'
 # tab has to guess from startTime, which calls a plan that is happening right now
 # over -- and the guess is invisible in the client's own green tests.
 has "feed items carry status" "$FEED" '"status"'
+# The card's category band (colour, pattern, token) and its Fixed/Flexible line.
+# An old server leaves these out and the "All" tab draws every plan as general.
+has "feed items carry category" "$FEED" '"category":"'
+has "and hasTime" "$FEED" '"hasTime":'
+has "and activityType" "$FEED" '"activityType":"'
 
 echo "== notifications: what notification_api.dart calls =="
 NOTIFS=$(curl -s -H "$AUTHB" "$API/notifications")
