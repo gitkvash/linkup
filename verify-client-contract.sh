@@ -268,6 +268,25 @@ LONG_TEXT=$(printf 'lets go for a walk somewhere quite far away and back again %
 printf '{"rawText":"%s","visibility":"PUBLIC","timeZone":"Asia/Tbilisi"}' "$LONG_TEXT" > /tmp/cc_long2.json
 check "a 270-char free-text plan is accepted" 201 "$(code -X POST "$API/activities/from-text" -H "$JSON" -H "$AUTHA" --data-binary @/tmp/cc_long2.json)"
 
+echo "== places: what place_api.dart calls =="
+# A plan links to a place by distance, on the server (V31) - the client sends only the
+# point. This one is ~200m from Lisi Lake's centre and starts in two days, so it has to
+# show up in the lake's "this week" count and list.
+SOON=$(date -u -d '+2 days' +%Y-%m-%dT15:00:00.000Z)
+LISI=$(curl -s -X POST "$API/activities" -H "$JSON" -H "$AUTHA" -d "{
+  \"title\":\"Contract swim\",\"startTime\":\"$SOON\",\"endTime\":null,\"hasTime\":true,
+  \"lat\":41.7456,\"lng\":44.7345,\"addressText\":\"Lisi\",\"visibility\":\"PUBLIC\",\"inviteeUserIds\":[]}")
+LID=$(jsonf "$LISI" id)
+PLACES=$(curl -s -H "$AUTHB" "$API/places?minLat=41.70&minLng=44.70&maxLat=41.76&maxLng=44.76")
+has "GET /places carries the seeded places" "$PLACES" '"name":"Lisi Lake"'
+has "GET /places carries the kind the marker draws" "$PLACES" '"kind":"LAKE"'
+LISI_PLACE=$(printf '%s' "$PLACES" | grep -o '{[^{}]*"name":"Lisi Lake"[^{}]*}')
+has "a plan by the lake is counted this week" "$LISI_PLACE" '"plansThisWeek":1'
+PLACE_ID=$(printf '%s' "$LISI_PLACE" | sed -n 's/.*"placeId":"\([^"]*\)".*/\1/p')
+has "GET /places/{id}/activities lists it" "$(curl -s -H "$AUTHB" "$API/places/$PLACE_ID/activities")" '"title":"Contract swim"'
+check "a viewport past the span limit is a 400" 400 "$(code -H "$AUTHB" "$API/places?minLat=30&minLng=30&maxLat=45&maxLng=45")"
+check "cleaning up the lake plan" 204 "$(code -X DELETE -H "$AUTHA" "$API/activities/$LID")"
+
 echo "== feed: what feed_api.dart calls =="
 FEED=$(curl -s -H "$AUTHB" "$API/feed?limit=20")
 has "GET /feed returns items/nextCursor" "$FEED" '"items"'
