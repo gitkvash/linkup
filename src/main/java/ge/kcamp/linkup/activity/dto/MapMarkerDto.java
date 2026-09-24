@@ -4,6 +4,7 @@ import ge.kcamp.linkup.activity.enums.ActivityCategory;
 import ge.kcamp.linkup.activity.enums.ActivityStatus;
 import ge.kcamp.linkup.activity.enums.ActivityType;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -29,7 +30,14 @@ public record MapMarkerDto(
          * Never ENDED: the map filters those out before clustering. A cluster reports LIVE
          * when any plan in it is, which is what makes it worth zooming into.
          */
-        ActivityStatus status
+        ActivityStatus status,
+
+        /*
+         * CLUSTER only: the plans in it, soonest first, at most
+         * ActivityMapRepository.MAX_CLUSTER_MEMBERS of them - so fewer than count when the
+         * cluster is bigger than that. Null on a PIN, which is its own single member.
+         */
+        List<MapClusterMemberDto> members
 ) {
     public enum MarkerType {
         PIN,

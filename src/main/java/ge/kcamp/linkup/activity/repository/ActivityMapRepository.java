@@ -3,6 +3,7 @@ package ge.kcamp.linkup.activity.repository;
 import ge.kcamp.linkup.activity.ActivityStatusSql;
 import ge.kcamp.linkup.activity.ActivityVisibilitySql;
 import ge.kcamp.linkup.activity.dto.BoundingBox;
+import ge.kcamp.linkup.activity.dto.MapClusterMemberDto;
 import ge.kcamp.linkup.activity.dto.MapMarkerDto;
 import ge.kcamp.linkup.activity.dto.MapSearchResultDto;
 import ge.kcamp.linkup.activity.enums.ActivityCategory;
@@ -14,7 +15,10 @@ import org.springframework.stereotype.Repository;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
+import java.time.ZonedDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -41,12 +45,25 @@ public class ActivityMapRepository {
      */
     private static final int MAX_CLUSTERED_ROWS = 2000;
 
+    /**
+     * Ceiling on the members a cluster carries. The list opened from a cluster is for the
+     * handful of plans zooming can't separate - several at one address - not for browsing
+     * a city-sized cluster, which the client zooms into instead.
+     */
+    public static final int MAX_CLUSTER_MEMBERS = 25;
+
     // ST_ClusterDBSCAN returns NULL for noise points; grouping naively by cluster_id
     // would collapse every noise point in the bbox into one giant "cluster" - the
     // COALESCE below gives each noise point its own unique group key instead.
+    //
+    // Rows come back one per activity, not one per group: a cluster now carries its
+    // members, and grouping in Java keeps each member's row intact where a GROUP BY would
+    // need an array_agg per field. The centroid is the mean of the members' coordinates,
+    // which is what ST_Centroid of a MULTIPOINT is.
     private static final String CLUSTER_QUERY = """
             WITH visible AS (
                 SELECT a.activity_id, a.title, a.activity_type, a.category,
+                       a.start_time, a.has_time, l.address_text,
                        (a.started_at IS NOT NULL
                         OR (a.has_time AND now() >= a.start_time + interval '5 minutes')) AS is_live,
                        l.geom_point
@@ -58,22 +75,19 @@ public class ActivityMapRepository {
                   AND %s
                 LIMIT %d
             ), clustered AS (
-                SELECT activity_id, title, activity_type, category, is_live, geom_point,
+                SELECT activity_id, title, activity_type, category, start_time, has_time,
+                       address_text, is_live, geom_point,
                        ST_ClusterDBSCAN(ST_Transform(geom_point, 3857), eps := :epsMeters, minpoints := :minPoints)
                            OVER () AS cluster_id
                 FROM visible
             )
             SELECT COALESCE(cluster_id::text, 'n_' || activity_id::text) AS group_key,
-                   count(*) AS cnt,
-                   ST_Y(ST_Centroid(ST_Collect(geom_point))) AS lat,
-                   ST_X(ST_Centroid(ST_Collect(geom_point))) AS lng,
-                   (array_agg(activity_id))[1] AS any_activity_id,
-                   (array_agg(title))[1] AS any_title,
-                   (array_agg(activity_type))[1] AS any_activity_type,
-                   (array_agg(category))[1] AS any_category,
-                   bool_or(is_live) AS any_live
+                   activity_id, title, activity_type, category, start_time, has_time,
+                   address_text, is_live,
+                   ST_Y(geom_point) AS lat,
+                   ST_X(geom_point) AS lng
             FROM clustered
-            GROUP BY 1
+            ORDER BY start_time, activity_id
             """.formatted(ActivityStatusSql.NOT_ENDED, ActivityVisibilitySql.VISIBLE_TO_VIEWER, MAX_CLUSTERED_ROWS);
 
     private final NamedParameterJdbcTemplate jdbcTemplate;
@@ -95,31 +109,83 @@ public class ActivityMapRepository {
         params.put(ActivityVisibilitySql.VIEWER_ID_PARAM,
                 Objects.requireNonNull(viewerId, "viewerId is required to read the map"));
 
-        return jdbcTemplate.query(CLUSTER_QUERY, params, ActivityMapRepository::mapRow);
+        // Insertion-ordered, and the rows arrive soonest first, so each group's members
+        // are already in the order the list shows them.
+        Map<String, List<ClusteredRow>> groups = new LinkedHashMap<>();
+        jdbcTemplate.query(CLUSTER_QUERY, params, (ResultSet rs) -> {
+            groups.computeIfAbsent(rs.getString("group_key"), key -> new ArrayList<>())
+                    .add(ClusteredRow.from(rs));
+        });
+
+        return groups.values().stream().map(ActivityMapRepository::toMarker).toList();
     }
 
-    private static MapMarkerDto mapRow(ResultSet rs, int rowNum) throws SQLException {
-        int count = rs.getInt("cnt");
-        double lat = rs.getDouble("lat");
-        double lng = rs.getDouble("lng");
+    /** One activity as the cluster query returns it, before it is grouped. */
+    private record ClusteredRow(
+            UUID activityId,
+            String title,
+            ActivityType activityType,
+            ActivityCategory category,
+            ZonedDateTime startTime,
+            boolean hasTime,
+            String addressText,
+            boolean live,
+            double lat,
+            double lng
+    ) {
+        static ClusteredRow from(ResultSet rs) throws SQLException {
+            return new ClusteredRow(
+                    (UUID) rs.getObject("activity_id"),
+                    rs.getString("title"),
+                    ActivityType.valueOf(rs.getString("activity_type")),
+                    ActivityCategory.valueOf(rs.getString("category")),
+                    rs.getObject("start_time", OffsetDateTime.class).toZonedDateTime(),
+                    rs.getBoolean("has_time"),
+                    rs.getString("address_text"),
+                    rs.getBoolean("is_live"),
+                    rs.getDouble("lat"),
+                    rs.getDouble("lng"));
+        }
 
         // Anything over has already been filtered out by ActivityStatusSql.NOT_ENDED, so
         // the only question left is whether it has begun.
-        ActivityStatus status = rs.getBoolean("any_live") ? ActivityStatus.LIVE : ActivityStatus.UPCOMING;
-
-        if (count == 1) {
-            return new MapMarkerDto(
-                    MapMarkerDto.MarkerType.PIN, lat, lng, count,
-                    (UUID) rs.getObject("any_activity_id"),
-                    rs.getString("any_title"),
-                    ActivityType.valueOf(rs.getString("any_activity_type")),
-                    ActivityCategory.valueOf(rs.getString("any_category")),
-                    status);
+        ActivityStatus status() {
+            return live ? ActivityStatus.LIVE : ActivityStatus.UPCOMING;
         }
+
+        MapClusterMemberDto toMember() {
+            return new MapClusterMemberDto(
+                    activityId, title, category, lat, lng, startTime, hasTime, addressText, status());
+        }
+    }
+
+    private static MapMarkerDto toMarker(List<ClusteredRow> rows) {
+        if (rows.size() == 1) {
+            ClusteredRow row = rows.getFirst();
+            return new MapMarkerDto(
+                    MapMarkerDto.MarkerType.PIN, row.lat(), row.lng(), 1,
+                    row.activityId(), row.title(), row.activityType(), row.category(),
+                    row.status(), null);
+        }
+
+        double lat = rows.stream().mapToDouble(ClusteredRow::lat).average().orElseThrow();
+        double lng = rows.stream().mapToDouble(ClusteredRow::lng).average().orElseThrow();
+
         // A cluster is several plans of possibly several kinds: it has no one category to
         // draw, and picking the first row's would label the whole group with it. Its
         // status is the loudest of them - one live plan makes the cluster worth looking at.
-        return new MapMarkerDto(MapMarkerDto.MarkerType.CLUSTER, lat, lng, count, null, null, null, null, status);
+        ActivityStatus status = rows.stream().anyMatch(ClusteredRow::live)
+                ? ActivityStatus.LIVE
+                : ActivityStatus.UPCOMING;
+
+        List<MapClusterMemberDto> members = rows.stream()
+                .limit(MAX_CLUSTER_MEMBERS)
+                .map(ClusteredRow::toMember)
+                .toList();
+
+        return new MapMarkerDto(
+                MapMarkerDto.MarkerType.CLUSTER, lat, lng, rows.size(),
+                null, null, null, null, status, members);
     }
 
     /**

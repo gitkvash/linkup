@@ -2,6 +2,7 @@ package ge.kcamp.linkup.activity.repository;
 
 import ge.kcamp.linkup.AbstractIntegrationTest;
 import ge.kcamp.linkup.activity.dto.BoundingBox;
+import ge.kcamp.linkup.activity.dto.MapClusterMemberDto;
 import ge.kcamp.linkup.activity.dto.MapMarkerDto;
 import ge.kcamp.linkup.activity.dto.MapSearchResultDto;
 import ge.kcamp.linkup.activity.entity.Activity;
@@ -25,6 +26,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 
 /**
  * Covers three things about the map query: the noise-point grouping fix, the category
@@ -81,6 +83,34 @@ class ActivityMapRepositoryIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void aClusterAtOnePlaceCarriesItsPlansSoonestFirstAtEveryZoom() {
+        UUID creatorId = UUID.randomUUID();
+        UserContext.setUserId(creatorId);
+
+        // Same coordinates: no eps separates these, which is why the cluster has to be
+        // able to list them.
+        ZonedDateTime now = ZonedDateTime.now();
+        createActivityAt(creatorId, "Late quiz", 41.7151, 44.8271,
+                ActivityCategory.GENERAL, ActivityVisibility.PUBLIC, now.plusHours(3));
+        createActivityAt(creatorId, "Early coffee", 41.7151, 44.8271,
+                ActivityCategory.FOOD_AND_DRINK, ActivityVisibility.PUBLIC, now.plusHours(1));
+
+        BoundingBox bbox = new BoundingBox(41.0, 44.0, 42.0, 45.0);
+        List<MapMarkerDto> markers = activityMapRepository.findClusteredMarkers(
+                bbox, 20.0, 2, creatorId);
+
+        assertThat(markers).singleElement().satisfies(marker -> {
+            assertThat(marker.type()).isEqualTo(MapMarkerDto.MarkerType.CLUSTER);
+            assertThat(marker.count()).isEqualTo(2);
+            assertThat(marker.lat()).isCloseTo(41.7151, within(1e-9));
+            assertThat(marker.members()).extracting(MapClusterMemberDto::title)
+                    .containsExactly("Early coffee", "Late quiz");
+            assertThat(marker.members().getFirst().category())
+                    .isEqualTo(ActivityCategory.FOOD_AND_DRINK);
+        });
+    }
+
+    @Test
     void aPinCarriesTheCategoryItsGlyphIsDrawnFrom() {
         UUID creatorId = UUID.randomUUID();
         UserContext.setUserId(creatorId);
@@ -94,6 +124,7 @@ class ActivityMapRepositoryIT extends AbstractIntegrationTest {
         assertThat(markers).singleElement().satisfies(marker -> {
             assertThat(marker.type()).isEqualTo(MapMarkerDto.MarkerType.PIN);
             assertThat(marker.category()).isEqualTo(ActivityCategory.RUNNING);
+            assertThat(marker.members()).isNull();
         });
     }
 
@@ -158,13 +189,19 @@ class ActivityMapRepositoryIT extends AbstractIntegrationTest {
     private void createActivityAt(
             UUID creatorId, String title, double lat, double lng,
             ActivityCategory category, ActivityVisibility visibility) {
+        createActivityAt(creatorId, title, lat, lng, category, visibility, ZonedDateTime.now());
+    }
+
+    private void createActivityAt(
+            UUID creatorId, String title, double lat, double lng,
+            ActivityCategory category, ActivityVisibility visibility, ZonedDateTime startTime) {
         Activity activity = Activity.builder()
                 .creatorId(creatorId)
                 .activityType(ActivityType.SPECIFIC_EVENT)
                 .title(title)
                 .visibility(visibility)
                 .category(category)
-                .startTime(ZonedDateTime.now())
+                .startTime(startTime)
                 .build();
         Activity saved = activityRepository.save(activity);
 
