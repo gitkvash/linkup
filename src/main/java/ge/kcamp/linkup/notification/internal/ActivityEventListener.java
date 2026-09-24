@@ -1,25 +1,32 @@
 package ge.kcamp.linkup.notification.internal;
 
+import ge.kcamp.linkup.activity.ActivityCancelledEvent;
 import ge.kcamp.linkup.activity.ActivityCreatedEvent;
 import ge.kcamp.linkup.activity.ActivityInvitationsSentEvent;
+import ge.kcamp.linkup.activity.ActivityStartedEvent;
+import ge.kcamp.linkup.activity.ActivityStartingSoonEvent;
 import ge.kcamp.linkup.identity.UserDirectoryService;
 import ge.kcamp.linkup.identity.UserSummary;
 import ge.kcamp.linkup.notification.CompositeNotificationDispatcher;
 import ge.kcamp.linkup.notification.NotificationMessage;
 import ge.kcamp.linkup.social.FriendRequestReceivedEvent;
 import ge.kcamp.linkup.social.FriendshipAcceptedEvent;
+import ge.kcamp.linkup.social.GroupService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.modulith.events.ApplicationModuleListener;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.FormatStyle;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -56,9 +63,12 @@ public class ActivityEventListener {
 
     private static final DateTimeFormatter WHEN =
             DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM);
+    private static final DateTimeFormatter DAY = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM);
+    private static final DateTimeFormatter TIME = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT);
 
     private final CompositeNotificationDispatcher notificationDispatcher;
     private final UserDirectoryService userDirectoryService;
+    private final GroupService groupService;
     private final ZoneId zone;
 
     /**
@@ -70,9 +80,11 @@ public class ActivityEventListener {
     public ActivityEventListener(
             CompositeNotificationDispatcher notificationDispatcher,
             UserDirectoryService userDirectoryService,
+            GroupService groupService,
             @Value("${linkup.notification.zone:Asia/Tbilisi}") ZoneId zone) {
         this.notificationDispatcher = notificationDispatcher;
         this.userDirectoryService = userDirectoryService;
+        this.groupService = groupService;
         this.zone = zone;
     }
 
@@ -116,6 +128,108 @@ public class ActivityEventListener {
                     Map.of("activityId", activityId.toString(), "otherUserId", hostId.toString())
             ), occurredAt);
         }
+    }
+
+    /**
+     * A plan shared with a group, for everyone in the group. Not the host, and not
+     * anyone the host also invited by name: they get the invitation, which asks for an
+     * answer. A listener of its own rather than more of {@link #onActivityCreated}, so
+     * each has its own publication and a failure here doesn't redeliver the invitations.
+     */
+    @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
+    public void onGroupActivityCreated(ActivityCreatedEvent event) {
+        if (event.groupId() == null) {
+            return;
+        }
+        Set<UUID> told = new HashSet<>(event.invitedUserIds());
+        told.add(event.creatorId());
+        List<UUID> members = groupService.memberIds(event.groupId()).stream()
+                .filter(memberId -> !told.contains(memberId))
+                .toList();
+        if (members.isEmpty()) {
+            return;
+        }
+        String host = usernameOf(event.creatorId());
+        String group = groupService.groupName(event.groupId()).orElse("your group");
+        for (var memberId : members) {
+            notificationDispatcher.dispatch(new NotificationMessage(
+                    memberId,
+                    "GROUP_ACTIVITY",
+                    host + " posted in " + group + ": " + event.title(),
+                    "Starts " + formatWhen(event.startTime()),
+                    Map.of("activityId", event.activityId().toString(),
+                            "otherUserId", event.creatorId().toString())
+            ), event.occurredAt());
+        }
+    }
+
+    /** The host started the plan early or on time, for everyone joined or invited. */
+    @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
+    public void onActivityStarted(ActivityStartedEvent event) {
+        String host = usernameOf(event.hostId());
+        for (var participantId : event.participantIds()) {
+            notificationDispatcher.dispatch(new NotificationMessage(
+                    participantId,
+                    "ACTIVITY_STARTED",
+                    host + " started " + event.title(),
+                    "It's happening now.",
+                    Map.of("activityId", event.activityId().toString(),
+                            "otherUserId", event.hostId().toString())
+            ), event.occurredAt());
+        }
+    }
+
+    /**
+     * The host cancelled. Still carries the activity id - the row keeps it (V27 has no
+     * foreign key for exactly this) - but the client routes this type to the plans list,
+     * since the plan itself now answers 404.
+     */
+    @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
+    public void onActivityCancelled(ActivityCancelledEvent event) {
+        String host = usernameOf(event.hostId());
+        String when = event.hasTime()
+                ? formatWhen(event.startTime())
+                : DAY.format(event.startTime().withZoneSameInstant(zone));
+        for (var participantId : event.participantIds()) {
+            notificationDispatcher.dispatch(new NotificationMessage(
+                    participantId,
+                    "ACTIVITY_CANCELLED",
+                    host + " cancelled " + event.title(),
+                    "It was planned for " + when + ".",
+                    Map.of("activityId", event.activityId().toString(),
+                            "otherUserId", event.hostId().toString())
+            ), event.occurredAt());
+        }
+    }
+
+    /**
+     * An occurrence is about to start, for everyone who joined it. The minutes are
+     * counted now rather than taken as given, since the scan runs up to a minute early
+     * and a retried publication runs later. One redelivered after the start is dropped:
+     * "starts in 30 minutes" about something already under way only misleads.
+     */
+    @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
+    public void onActivityStartingSoon(ActivityStartingSoonEvent event) {
+        Duration left = Duration.between(Instant.now(), event.startTime().toInstant());
+        if (left.isNegative()) {
+            return;
+        }
+        long minutes = Math.max(1, (left.toSeconds() + 59) / 60);
+        for (var participantId : event.participantIds()) {
+            notificationDispatcher.dispatch(new NotificationMessage(
+                    participantId,
+                    "ACTIVITY_REMINDER",
+                    event.title() + " starts in " + minutes + " min",
+                    "Starts at " + TIME.format(event.startTime().withZoneSameInstant(zone)) + ".",
+                    Map.of("activityId", event.activityId().toString())
+            ), event.occurredAt());
+        }
+    }
+
+    private String usernameOf(UUID userId) {
+        return userDirectoryService.findById(userId)
+                .map(UserSummary::username)
+                .orElse("Someone");
     }
 
     /** In {@link #zone}, whatever offset the stored time happens to carry. */

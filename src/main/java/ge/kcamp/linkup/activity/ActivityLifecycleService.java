@@ -3,10 +3,13 @@ package ge.kcamp.linkup.activity;
 import ge.kcamp.linkup.activity.entity.Activity;
 import ge.kcamp.linkup.activity.exception.ActivityNotVisibleException;
 import ge.kcamp.linkup.activity.repository.ActivityRepository;
+import ge.kcamp.linkup.activity.repository.ParticipantRepository;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.ZonedDateTime;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -24,9 +27,16 @@ import java.util.UUID;
 public class ActivityLifecycleService {
 
     private final ActivityRepository activityRepository;
+    private final ParticipantRepository participantRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
-    public ActivityLifecycleService(ActivityRepository activityRepository) {
+    public ActivityLifecycleService(
+            ActivityRepository activityRepository,
+            ParticipantRepository participantRepository,
+            ApplicationEventPublisher eventPublisher) {
         this.activityRepository = activityRepository;
+        this.participantRepository = participantRepository;
+        this.eventPublisher = eventPublisher;
     }
 
     /**
@@ -34,15 +44,32 @@ public class ActivityLifecycleService {
      * the window runs from it and a double tap must not extend the plan by an hour.
      * Starting something already ended reopens it - the host is the authority on whether
      * their own plan is over.
+     * <p>
+     * Only the first start publishes {@link ActivityStartedEvent}: a repeat keeps the
+     * timestamp, and a reopened plan already told everyone once.
      */
     @Transactional
     public void start(UUID activityId, UUID actorId) {
         Activity activity = requireOwn(activityId, actorId);
         activity.setEndedAt(null);
-        if (activity.getStartedAt() == null) {
+        boolean firstStart = activity.getStartedAt() == null;
+        if (firstStart) {
             activity.setStartedAt(ZonedDateTime.now());
         }
         activityRepository.save(activity);
+
+        if (firstStart) {
+            List<UUID> participants = participantRepository
+                    .findUserIdsByActivityAndStatusIn(activityId, ParticipantRepository.IN_THE_PLAN)
+                    .stream()
+                    .filter(userId -> !userId.equals(actorId))
+                    .toList();
+            if (!participants.isEmpty()) {
+                eventPublisher.publishEvent(new ActivityStartedEvent(
+                        activityId, actorId, activity.getTitle(), participants,
+                        activity.getStartedAt().toInstant()));
+            }
+        }
     }
 
     /**

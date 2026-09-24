@@ -139,9 +139,7 @@ public final class ActivityStatusResolver {
             return occurrence;
         }
 
-        int interval = plan.repeatInterval() == null || plan.repeatInterval() < 1
-                ? 1
-                : plan.repeatInterval();
+        int interval = intervalOf(plan);
 
         for (int step = 0; step < MAX_OCCURRENCE_STEPS; step++) {
             if (now.isBefore(autoEnd(plan, occurrence))) {
@@ -156,6 +154,40 @@ public final class ActivityStatusResolver {
             occurrence = next;
         }
         return occurrence;
+    }
+
+    /**
+     * The first time the plan starts after {@code after}, or null if it never starts
+     * again: a one-off whose start has passed, or a repeat rule that has run out.
+     * <p>
+     * The next start, where {@link #currentOccurrence} is the occurrence covering a
+     * moment - what the start-of-plan reminder needs, since "starts in 30 minutes" is
+     * about an occurrence that hasn't begun. Says nothing about whether the host has
+     * already started or ended the plan; the caller checks that.
+     */
+    public static ZonedDateTime nextStartAfter(Lifecycle plan, ZonedDateTime after) {
+        ZonedDateTime occurrence = plan.startTime();
+        if (plan.repeatFrequency() == null) {
+            return occurrence.isAfter(after) ? occurrence : null;
+        }
+
+        int interval = intervalOf(plan);
+        for (int step = 0; step < MAX_OCCURRENCE_STEPS; step++) {
+            if (plan.repeatUntil() != null && occurrence.isAfter(plan.repeatUntil())) {
+                return null;
+            }
+            if (occurrence.isAfter(after)) {
+                return occurrence;
+            }
+            occurrence = advance(occurrence, plan.repeatFrequency(), interval);
+        }
+        return null;
+    }
+
+    private static int intervalOf(Lifecycle plan) {
+        return plan.repeatInterval() == null || plan.repeatInterval() < 1
+                ? 1
+                : plan.repeatInterval();
     }
 
     private static ZonedDateTime advance(ZonedDateTime from, RepeatFrequency frequency, int interval) {

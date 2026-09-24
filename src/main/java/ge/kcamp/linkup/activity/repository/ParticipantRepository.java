@@ -9,8 +9,10 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -26,6 +28,18 @@ public interface ParticipantRepository extends JpaRepository<Participant, Partic
     List<Participant> findByIdActivityIdOrderByStatusAsc(UUID activityId);
 
     long countByIdActivityIdAndStatus(UUID activityId, ParticipantStatus status);
+
+    /** Joined, or invited and yet to answer: who hears that a plan started or was cancelled. */
+    Set<ParticipantStatus> IN_THE_PLAN = Set.of(ParticipantStatus.JOINED, ParticipantStatus.INVITED);
+
+    /** Who is in a plan with one of these statuses - the recipients of a plan's notifications. */
+    @Query("""
+            SELECT p.id.userId FROM Participant p
+            WHERE p.id.activityId = :activityId AND p.status IN :statuses
+            """)
+    List<UUID> findUserIdsByActivityAndStatusIn(
+            @Param("activityId") UUID activityId,
+            @Param("statuses") Collection<ParticipantStatus> statuses);
 
     /** Activity ids this user has some relationship with, filtered by status. */
     @Query("""

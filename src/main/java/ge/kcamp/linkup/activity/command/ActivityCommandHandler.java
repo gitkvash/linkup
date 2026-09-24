@@ -1,5 +1,6 @@
 package ge.kcamp.linkup.activity.command;
 
+import ge.kcamp.linkup.activity.ActivityCancelledEvent;
 import ge.kcamp.linkup.activity.ActivityDeletedEvent;
 import ge.kcamp.linkup.activity.ActivityUpdatedEvent;
 import ge.kcamp.linkup.activity.CasualPlanSpec;
@@ -9,6 +10,7 @@ import ge.kcamp.linkup.activity.entity.Location;
 import ge.kcamp.linkup.activity.exception.ActivityNotVisibleException;
 import ge.kcamp.linkup.activity.repository.ActivityRepository;
 import ge.kcamp.linkup.activity.repository.LocationRepository;
+import ge.kcamp.linkup.activity.repository.ParticipantRepository;
 import ge.kcamp.linkup.nlp.NlpParserService;
 import ge.kcamp.linkup.nlp.ParsedActivityText;
 import org.locationtech.jts.geom.Coordinate;
@@ -22,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -41,6 +44,7 @@ public class ActivityCommandHandler {
     private final LocationRepository locationRepository;
     private final NlpParserService nlpParserService;
     private final ActivityPersistenceService activityPersistenceService;
+    private final ParticipantRepository participantRepository;
     private final ApplicationEventPublisher eventPublisher;
     private final GeometryFactory geometryFactory = new GeometryFactory(new PrecisionModel(), WGS84_SRID);
 
@@ -49,11 +53,13 @@ public class ActivityCommandHandler {
             LocationRepository locationRepository,
             NlpParserService nlpParserService,
             ActivityPersistenceService activityPersistenceService,
+            ParticipantRepository participantRepository,
             ApplicationEventPublisher eventPublisher) {
         this.activityRepository = activityRepository;
         this.locationRepository = locationRepository;
         this.nlpParserService = nlpParserService;
         this.activityPersistenceService = activityPersistenceService;
+        this.participantRepository = participantRepository;
         this.eventPublisher = eventPublisher;
     }
 
@@ -174,14 +180,27 @@ public class ActivityCommandHandler {
      * Cancels a plan. {@code participants} and {@code locations} go with it through
      * {@code ON DELETE CASCADE} (V14). Publishes {@link ActivityDeletedEvent}, in this
      * transaction, so the feed can drop the id from the timelines it was fanned out to
-     * rather than keeping it until it ages out.
+     * rather than keeping it until it ages out. And {@link ActivityCancelledEvent}, for
+     * the people who were in it - whose ids have to be read here, before the cascade
+     * takes their rows.
      */
     @Transactional
     public void handle(DeleteActivityCommand command) {
         Activity activity = requireOwned(command.activityId(), command.actorId());
+        List<UUID> participants = participantRepository
+                .findUserIdsByActivityAndStatusIn(activity.getId(), ParticipantRepository.IN_THE_PLAN)
+                .stream()
+                .filter(userId -> !userId.equals(activity.getCreatorId()))
+                .toList();
         activityRepository.delete(activity);
+        Instant now = Instant.now();
         eventPublisher.publishEvent(new ActivityDeletedEvent(
-                activity.getId(), activity.getCreatorId(), Instant.now()));
+                activity.getId(), activity.getCreatorId(), now));
+        if (!participants.isEmpty()) {
+            eventPublisher.publishEvent(new ActivityCancelledEvent(
+                    activity.getId(), activity.getCreatorId(), activity.getTitle(),
+                    activity.getStartTime(), activity.isHasTime(), participants, now));
+        }
     }
 
     /**

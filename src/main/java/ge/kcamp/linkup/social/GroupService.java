@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -182,6 +183,18 @@ public class GroupService {
         return groupMemberRepository.findByIdGroupId(groupId).stream()
                 .map(membership -> membership.getId().getUserId())
                 .toList();
+    }
+
+    /**
+     * A group's name, for {@code notification} to say which group a plan was shared
+     * with. No membership check, for the reason {@link #memberIds} gives.
+     */
+    @Transactional(readOnly = true)
+    public Optional<String> groupName(UUID groupId) {
+        if (groupId == null) {
+            return Optional.empty();
+        }
+        return groupRepository.findById(groupId).map(Group::getGroupName);
     }
 
     /** Any member may read; only the owner may change membership, bar leaving. */

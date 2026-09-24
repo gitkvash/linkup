@@ -2,6 +2,7 @@ package ge.kcamp.linkup.notification.internal;
 
 import ge.kcamp.linkup.identity.UserDirectoryService;
 import ge.kcamp.linkup.notification.CompositeNotificationDispatcher;
+import ge.kcamp.linkup.social.GroupService;
 import ge.kcamp.linkup.notification.NotificationMessage;
 import org.junit.jupiter.api.Test;
 
@@ -73,7 +74,7 @@ class NotificationDedupeAndZoneTest {
     void planTimesAreFormattedInTheConfiguredZoneNotTheJvms() {
         ActivityEventListener listener = new ActivityEventListener(
                 mock(CompositeNotificationDispatcher.class), mock(UserDirectoryService.class),
-                ZoneId.of("Asia/Tbilisi"));
+                mock(GroupService.class), ZoneId.of("Asia/Tbilisi"));
         // 03:00 UTC, stored with a UTC offset - what the server holds on Render. Picked
         // so the check reads the same in 12- and 24-hour locales.
         ZonedDateTime utc = ZonedDateTime.of(2026, 9, 24, 3, 0, 0, 0, ZoneOffset.UTC);
