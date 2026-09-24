@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisOperations;
 import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ZSetOperations.TypedTuple;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -88,6 +89,35 @@ class RedisFeedTimelineRepository {
             return List.of();
         }
         return ids.stream().map(UUID::fromString).toList();
+    }
+
+    /** One timeline entry and the score it is stored under. */
+    record Entry(UUID activityId, double score) {
+    }
+
+    /**
+     * As {@link #read}, with each entry's score. The feed pages on the stored score, so
+     * it needs the score of an entry it then filters out, not only of the ones it keeps.
+     */
+    List<Entry> readScored(UUID userId, Double beforeScore, int limit) {
+        double max = beforeScore == null ? Double.POSITIVE_INFINITY : beforeScore - 1;
+        Set<TypedTuple<String>> tuples = redisTemplate.opsForZSet()
+                .reverseRangeByScoreWithScores(timelineKey(userId), Double.NEGATIVE_INFINITY, max, 0, limit);
+        if (tuples == null) {
+            return List.of();
+        }
+        return tuples.stream()
+                .map(tuple -> new Entry(UUID.fromString(tuple.getValue()), tuple.getScore()))
+                .toList();
+    }
+
+    /** Drops entries the feed found no row for, or no longer may show this user. */
+    void remove(UUID userId, Collection<UUID> activityIds) {
+        if (activityIds.isEmpty()) {
+            return;
+        }
+        redisTemplate.opsForZSet().remove(timelineKey(userId),
+                activityIds.stream().map(UUID::toString).toArray());
     }
 
     private static String timelineKey(UUID userId) {

@@ -42,4 +42,10 @@ public class ActivityQueryService {
     public List<ActivityFeedItem> findByCreatorIn(List<UUID> creatorIds, Instant after, UUID viewerId) {
         return activityQueryRepository.findByCreatorIn(creatorIds, after, viewerId);
     }
+
+    /** As above, bounded above by start time; null {@code notAfter} means no bound. */
+    public List<ActivityFeedItem> findByCreatorIn(
+            List<UUID> creatorIds, Instant after, Instant notAfter, UUID viewerId) {
+        return activityQueryRepository.findByCreatorIn(creatorIds, after, notAfter, viewerId);
+    }
 }

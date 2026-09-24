@@ -113,17 +113,32 @@ public class ActivityQueryRepository {
     }
 
     public List<ActivityFeedItem> findByCreatorIn(List<UUID> creatorIds, Instant after, UUID viewerId) {
+        return findByCreatorIn(creatorIds, after, null, viewerId);
+    }
+
+    /**
+     * @param notAfter upper bound on start time, inclusive, or null for none. The feed
+     *                 pages newest-start-first, so without it every page past the first
+     *                 re-read the same newest {@value #MAX_ROWS} rows and filtered them
+     *                 away, and anything older than those was never served at all.
+     */
+    public List<ActivityFeedItem> findByCreatorIn(
+            List<UUID> creatorIds, Instant after, Instant notAfter, UUID viewerId) {
         if (creatorIds.isEmpty()) {
             return List.of();
         }
         String sql = BASE_SELECT
                 + " WHERE a.creator_id IN (:creatorIds) AND a.start_time >= :after"
+                + (notAfter == null ? "" : " AND a.start_time <= :notAfter")
                 + " AND " + ActivityVisibilitySql.VISIBLE_TO_VIEWER
                 + " ORDER BY a.start_time DESC LIMIT " + MAX_ROWS;
 
         Map<String, Object> params = new HashMap<>();
         params.put("creatorIds", creatorIds);
         params.put("after", Timestamp.from(after));
+        if (notAfter != null) {
+            params.put("notAfter", Timestamp.from(notAfter));
+        }
         params.put(ActivityVisibilitySql.VIEWER_ID_PARAM, requireViewer(viewerId));
 
         return jdbcTemplate.query(sql, params, ActivityQueryRepository::mapRow);

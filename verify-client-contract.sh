@@ -291,6 +291,27 @@ curl -s -o /dev/null -X POST "$API/friends/request" -H "$JSON" -H "$AUTHC" -d "{
 curl -s -o /dev/null -X POST "$API/friends/accept" -H "$JSON" -H "$AUTHB" -d "{\"targetUserId\":\"$IDC\"}"
 sleep 2  # the backfill is an async module listener
 has "a new friend's earlier plan reaches the feed" "$(curl -s -H "$AUTHB" "$API/feed?limit=50")" "${LATE_ID:-missing-id}"
+# The client reloads All the moment a create returns, before the async fan-out has
+# written the timeline; the creator's own plans are read from Postgres so it's there.
+MINE=$(jsonf "$(curl -s -X POST "$API/activities" -H "$JSON" -H "$AUTHC" -d '{"title":"just made","startTime":"2031-07-01T10:00:00Z","visibility":"FRIENDS"}')" id)
+has "a plan is in its creator's feed straight after the create" "$(curl -s -H "$AUTHC" "$API/feed?limit=50")" "${MINE:-missing-id}"
+# A deleted plan still in a timeline used to count against the page, and a short page
+# read as the end: two deletions among the newest three cut B's feed off right there.
+PROBES=""
+for d in 01 02 03 04 05 06; do
+  PROBES="$PROBES $(jsonf "$(curl -s -X POST "$API/activities" -H "$JSON" -H "$AUTHC" -d "{\"title\":\"page probe $d\",\"startTime\":\"2032-01-${d}T10:00:00Z\",\"visibility\":\"FRIENDS\"}")" id)"
+done
+sleep 2  # fan-out is an async module listener
+for GONE in $(echo $PROBES | cut -d' ' -f5-6); do
+  curl -s -o /dev/null -X DELETE -H "$AUTHC" "$API/activities/$GONE"
+done
+PAGE=$(curl -s -H "$AUTHB" "$API/feed?limit=3")
+case "$PAGE" in
+  *'"nextCursor":null'*) bad "deleted plans among the newest don't end the feed (got $PAGE)" ;;
+  *'"nextCursor":'*) ok "deleted plans among the newest don't end the feed" ;;
+  *) bad "deleted plans among the newest don't end the feed (got $PAGE)" ;;
+esac
+has "and the page is still full" "$PAGE" 'page probe 02'
 
 echo "== notifications: what notification_api.dart calls =="
 NOTIFS=$(curl -s -H "$AUTHB" "$API/notifications")
