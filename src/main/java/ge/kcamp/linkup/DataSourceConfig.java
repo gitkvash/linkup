@@ -55,8 +55,26 @@ class DataSourceConfig {
 
     private static final Logger log = LoggerFactory.getLogger(DataSourceConfig.class);
 
-    /** Threads behind every {@code @Async} and {@code @ApplicationModuleListener}. */
-    static final int EXECUTOR_MAX_THREADS = 16;
+    /**
+     * Threads behind every {@code @Async} and {@code @ApplicationModuleListener}.
+     *
+     * <p>Bounded by the database, not the CPU. Production connects through Supabase's
+     * session-mode pooler, which admits 15 clients in total - across every instance, so a
+     * deploy (old and new instance overlapping) has to fit too. This was 16, which with
+     * the pool sized from it made one instance want 30 connections: the live instance took
+     * all 15 and the next deploy's Flyway could not get one. 16 was also never reached in
+     * practice: a ThreadPoolTaskExecutor only grows past its core size once the queue (200)
+     * is full, and the core size was already 4.
+     */
+    static final int EXECUTOR_MAX_THREADS = 4;
+
+    /**
+     * Connections each pool keeps when idle, and how long a surplus one may sit unused.
+     * Hikari otherwise holds every pool at its maximum for good, so an idle instance still
+     * occupies its whole share of the pooler and a deploy has nothing left to start with.
+     */
+    static final int POOL_MIN_IDLE = 1;
+    static final long POOL_IDLE_TIMEOUT_MS = 60_000;
 
     /**
      * System connections beyond one per executor thread. Not everything on the system
@@ -90,6 +108,7 @@ class DataSourceConfig {
         // needed a second connection while holding the first, so five concurrent
         // notifications could deadlock the pool against itself until the timeout.
         dataSource.setMaximumPoolSize(EXECUTOR_MAX_THREADS + SYSTEM_POOL_HEADROOM);
+        releaseWhenIdle(dataSource);
         return dataSource;
     }
 
@@ -106,7 +125,13 @@ class DataSourceConfig {
                 .build();
         dataSource.setPoolName("linkup-app");
         dataSource.setMaximumPoolSize(app.getMaxPoolSize());
+        releaseWhenIdle(dataSource);
         return dataSource;
+    }
+
+    private static void releaseWhenIdle(HikariDataSource dataSource) {
+        dataSource.setMinimumIdle(Math.min(POOL_MIN_IDLE, dataSource.getMaximumPoolSize()));
+        dataSource.setIdleTimeout(POOL_IDLE_TIMEOUT_MS);
     }
 
     @Bean
@@ -167,7 +192,7 @@ class DataSourceConfig {
     ThreadPoolTaskExecutor applicationTaskExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setThreadNamePrefix("linkup-async-");
-        executor.setCorePoolSize(4);
+        executor.setCorePoolSize(EXECUTOR_MAX_THREADS);
         executor.setMaxPoolSize(EXECUTOR_MAX_THREADS);
         executor.setQueueCapacity(200);
         executor.setTaskDecorator(systemRoleDecorator());
@@ -220,7 +245,7 @@ class DataSourceConfig {
     static class AppDataSourceProperties {
         private String username;
         private String password;
-        private int maxPoolSize = 10;
+        private int maxPoolSize = 5;
 
         public String getUsername() {
             return username;
