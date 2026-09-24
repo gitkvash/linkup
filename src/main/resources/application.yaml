@@ -1,6 +1,10 @@
 server:
   port: ${PORT:8080}
   shutdown: graceful
+  # Render terminates TLS and forwards; without this every request's remote address is
+  # the proxy's, and the per-client rate limits on /auth would be one shared bucket.
+  # Tomcat's RemoteIpValve only trusts X-Forwarded-For from private-range proxies.
+  forward-headers-strategy: native
 
 spring:
   lifecycle:
@@ -65,12 +69,19 @@ spring:
       # Only safe with notification deduplication in place (V10's dedupe_key), or every
       # restart would redeliver and duplicate rows.
       republish-outstanding-events-on-restart: true
+      # A completed publication is deleted rather than stamped. With UPDATE (the default)
+      # nothing ever removed them, and event_publication kept a full serialized copy of
+      # every event ever published.
+      completion-mode: delete
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus,metrics
+        # Only health: anything else here is readable by any signed-up account, because
+        # SecurityConfig only requires authentication and registration is open. Metrics
+        # and prometheus exposed the full URI inventory and pool/JVM internals.
+        include: health
   endpoint:
     health:
       show-details: never
@@ -97,7 +108,10 @@ linkup:
     jwt:
       # Intentionally no default. See spring.profiles.default above.
       secret: ${LINKUP_JWT_SECRET:}
-      expiration-ms: ${LINKUP_JWT_EXPIRATION_MS:86400000}
+      # 15 minutes. Refresh tokens are now tracked and revocable (V28), but an access
+      # token is not checked against anything - its lifetime is the window a leaked or
+      # signed-out one stays usable.
+      expiration-ms: ${LINKUP_JWT_EXPIRATION_MS:900000}
       # 180 days, and sliding: every POST /auth/refresh issues a fresh one, so only
       # someone who hasn't opened the app for half a year has to sign in again.
       refresh-expiration-ms: ${LINKUP_JWT_REFRESH_EXPIRATION_MS:15552000000}
@@ -116,3 +130,21 @@ linkup:
     timeout: ${LINKUP_SSE_TIMEOUT:PT15M}
   fcm:
     credentials-path: ${LINKUP_FCM_CREDENTIALS_PATH:}
+  rate-limit:
+    # In-memory, per instance (one Render instance today). Buckets are keyed by client IP
+    # on /auth, by username on login, and by user on the free-text parser.
+    enabled: ${LINKUP_RATE_LIMIT_ENABLED:true}
+    auth-per-ip:
+      requests: 20
+      window-seconds: 60
+    login-per-username:
+      requests: 10
+      window-seconds: 900
+    from-text-per-user:
+      requests: 10
+      window-seconds: 60
+    max-keys: 100000
+  notification:
+    # Push text is rendered on the server, so a plan's time has to be formatted in some
+    # zone. The JVM's (UTC on Render) put Tbilisi users four hours off.
+    zone: ${LINKUP_NOTIFICATION_ZONE:Asia/Tbilisi}

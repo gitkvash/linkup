@@ -4,6 +4,7 @@ import ge.kcamp.linkup.identity.IdentityService;
 import ge.kcamp.linkup.identity.dto.AuthResponse;
 import ge.kcamp.linkup.identity.dto.GoogleLoginRequest;
 import ge.kcamp.linkup.identity.dto.LoginRequest;
+import ge.kcamp.linkup.identity.dto.LogoutRequest;
 import ge.kcamp.linkup.identity.dto.RefreshRequest;
 import ge.kcamp.linkup.identity.dto.RegisterRequest;
 import jakarta.validation.Valid;
@@ -46,5 +47,15 @@ public class AuthController {
     @PostMapping("/refresh")
     public ResponseEntity<AuthResponse> refresh(@Valid @RequestBody RefreshRequest request) {
         return ResponseEntity.ok(identityService.refresh(request.refreshToken()));
+    }
+
+    /**
+     * Ends the session the refresh token belongs to. Always 204, even for a token that is
+     * missing, unknown or already revoked, so signing out can never fail on the client.
+     */
+    @PostMapping("/logout")
+    public ResponseEntity<Void> logout(@RequestBody(required = false) LogoutRequest request) {
+        identityService.logout(request == null ? null : request.refreshToken());
+        return ResponseEntity.noContent().build();
     }
 }

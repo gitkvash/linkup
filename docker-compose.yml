@@ -7,7 +7,9 @@ services:
       POSTGRES_PASSWORD: password
       POSTGRES_DB: linkup
     ports:
-      - "5433:5432"
+      # Loopback only: the dev password is "password" and this is not meant to be
+      # reachable from the rest of the network.
+      - "127.0.0.1:5433:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
 
@@ -15,7 +17,8 @@ services:
     image: redis:7-alpine
     container_name: linkup-redis
     ports:
-      - "6379:6379"
+      # Loopback only: this Redis has no password.
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
 

@@ -46,6 +46,8 @@ public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
+    private static final String APPLICATION_PACKAGE = GlobalExceptionHandler.class.getPackageName() + ".";
+
     /** Bean validation on a {@code @Valid @RequestBody}. */
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleInvalidBody(MethodArgumentNotValidException ex) {
@@ -120,13 +122,30 @@ public class GlobalExceptionHandler {
     /**
      * Hand-rolled argument checks (e.g. {@code BoundingBox.validate()}) throw this.
      * They were reaching the client as a 500 with no explanation.
+     * <p>
+     * The message is only forwarded when this application threw the exception. Libraries
+     * throw IllegalArgumentException too - {@code UUID.fromString}, {@code Enum.valueOf},
+     * Spring's {@code Assert}, BCrypt - and their messages were being echoed verbatim:
+     * internal class names, enum constants, whatever input they choked on. The domain's
+     * own messages are written for people and are thrown from {@code ge.kcamp.linkup}
+     * code, so the throw site (the top stack frame) tells the two apart without a new
+     * exception type in every module. No stack trace means no proof, so it fails generic.
      */
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException ex) {
+        String message = thrownByThisApplication(ex) ? ex.getMessage() : null;
+        if (message == null) {
+            log.debug("Rejected request with a library IllegalArgumentException", ex);
+        }
         return ApiError.of(
                 HttpStatus.BAD_REQUEST,
-                defaultIfBlank(ex.getMessage(), "The request was not valid."),
+                defaultIfBlank(message, "The request was not valid."),
                 ApiError.VALIDATION_FAILED);
+    }
+
+    private static boolean thrownByThisApplication(Throwable ex) {
+        StackTraceElement[] trace = ex.getStackTrace();
+        return trace.length > 0 && trace[0].getClassName().startsWith(APPLICATION_PACKAGE);
     }
 
     /**

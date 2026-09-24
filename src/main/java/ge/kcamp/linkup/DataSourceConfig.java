@@ -1,11 +1,14 @@
 package ge.kcamp.linkup;
 
 import com.zaxxer.hikari.HikariDataSource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.jdbc.autoconfigure.DataSourceProperties;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.DependsOn;
 import org.springframework.context.annotation.Primary;
 import org.springframework.core.env.Environment;
 import org.springframework.core.task.TaskDecorator;
@@ -20,6 +23,8 @@ import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.RejectedExecutionHandler;
 
 /**
  * Two connection pools behind one {@link DataSource} bean.
@@ -48,6 +53,19 @@ import java.util.UUID;
 @Configuration(proxyBeanMethods = false)
 class DataSourceConfig {
 
+    private static final Logger log = LoggerFactory.getLogger(DataSourceConfig.class);
+
+    /** Threads behind every {@code @Async} and {@code @ApplicationModuleListener}. */
+    static final int EXECUTOR_MAX_THREADS = 16;
+
+    /**
+     * System connections beyond one per executor thread. Not everything on the system
+     * pool is an executor thread: {@code DeviceTokenService} runs its token move as the
+     * system role on the request thread, and a feed listener that calls into another
+     * module's REQUIRES_NEW method needs a second connection for the duration.
+     */
+    static final int SYSTEM_POOL_HEADROOM = 4;
+
     // The owner connection comes from Boot's own spring.datasource binding - that
     // DataSourceProperties bean is registered unconditionally, so declaring a second one
     // here just makes the injection point ambiguous. It is the template for both pools:
@@ -65,8 +83,13 @@ class DataSourceConfig {
                 .type(HikariDataSource.class)
                 .build();
         dataSource.setPoolName("linkup-system");
-        // Background work only, and it is not on any latency path.
-        dataSource.setMaximumPoolSize(5);
+        // Sized from the executor, not guessed. It was 5 against an executor of 16
+        // threads, each of which held a connection for its listener's whole transaction:
+        // five busy listeners and the other eleven sat in Hikari's 30 s getConnection
+        // wait, then failed - and the notification dispatcher's nested REQUIRES_NEW
+        // needed a second connection while holding the first, so five concurrent
+        // notifications could deadlock the pool against itself until the timeout.
+        dataSource.setMaximumPoolSize(EXECUTOR_MAX_THREADS + SYSTEM_POOL_HEADROOM);
         return dataSource;
     }
 
@@ -116,16 +139,56 @@ class DataSourceConfig {
      *
      * <p>Every {@code @ApplicationModuleListener} in the application runs here, so this
      * one bean is what puts notification dispatch and feed fan-out on the system role.
+     *
+     * <p>Shutdown waits for queued and running tasks, for at most ten seconds - with the
+     * web server's 20 s graceful phase, that fits the 30 s Render allows by default
+     * between SIGTERM and SIGKILL. It used to interrupt them: a listener cut off after its row
+     * committed but before the push went out left a publication that, on retry, found
+     * the row and (correctly) sent nothing. {@code @DependsOn} makes the wait happen
+     * before the persistence unit and both pools are closed, since the waited-for tasks
+     * still need them - destroy order otherwise follows creation order, which nothing
+     * here pins down. (If JPA bootstrap is ever made deferred, which would borrow this
+     * executor, this becomes a cycle and fails at startup rather than silently.)
+     *
+     * <p>Rejection is loud and loses nothing. {@code CallerRunsPolicy} was considered
+     * and is role-safe - the decorator is applied before the task reaches the pool, so
+     * the runnable the caller would run still switches to SYSTEM and back - but the
+     * caller is almost always a request thread in the after-completion callback of its
+     * own transaction, still holding its app-pool connection. Under exactly the load
+     * that fills this queue, every request would then also run a listener, holding a
+     * second, system connection and making an FCM round trip before it could answer.
+     * Instead the task is refused with a warning. Modulith wrote the publication to
+     * {@code event_publication} before handing it here, so a refused listener leaves it
+     * incomplete, and {@code EventPublicationResubmitter} delivers it once the backlog
+     * clears.
      */
     @Bean(name = {"applicationTaskExecutor", "taskExecutor"})
+    @DependsOn("entityManagerFactory")
     ThreadPoolTaskExecutor applicationTaskExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setThreadNamePrefix("linkup-async-");
         executor.setCorePoolSize(4);
-        executor.setMaxPoolSize(16);
+        executor.setMaxPoolSize(EXECUTOR_MAX_THREADS);
         executor.setQueueCapacity(200);
         executor.setTaskDecorator(systemRoleDecorator());
+        executor.setRejectedExecutionHandler(rejectLoudly());
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(10);
         return executor;
+    }
+
+    private static RejectedExecutionHandler rejectLoudly() {
+        return (task, pool) -> {
+            if (pool.isShutdown()) {
+                // Submitted during shutdown. Same outcome - the publication stays
+                // incomplete and is republished on the next start - but not a warning.
+                throw new RejectedExecutionException("applicationTaskExecutor is shutting down");
+            }
+            log.warn("applicationTaskExecutor is saturated ({} threads active, {} queued); refusing a task. "
+                            + "An event listener refused here stays incomplete in event_publication and is resubmitted.",
+                    pool.getActiveCount(), pool.getQueue().size());
+            throw new RejectedExecutionException("applicationTaskExecutor is saturated");
+        };
     }
 
     private static TaskDecorator systemRoleDecorator() {

@@ -38,13 +38,19 @@ public interface UserRepository extends JpaRepository<User, UUID> {
      * "antonino". Uses LOWER(...) LIKE rather than a derived
      * {@code ContainingIgnoreCase} query so the ordering clause can share the same
      * expression.
+     * <p>
+     * {@code query} must already be LIKE-escaped with {@code !} (see
+     * {@code UserDirectoryService}). Passed through raw, a search for {@code __} or
+     * {@code %%} matched every account, which is a directory dump 50 at a time. {@code !}
+     * rather than PostgreSQL's default backslash because it means the same thing in HQL
+     * and SQL string literals, and no valid username can contain it.
      */
     @Query("""
             SELECT u FROM User u
-            WHERE LOWER(u.username) LIKE LOWER(CONCAT('%', :query, '%'))
+            WHERE LOWER(u.username) LIKE LOWER(CONCAT('%', :query, '%')) ESCAPE '!'
               AND u.id <> :excludeUserId
             ORDER BY
-              CASE WHEN LOWER(u.username) LIKE LOWER(CONCAT(:query, '%')) THEN 0 ELSE 1 END,
+              CASE WHEN LOWER(u.username) LIKE LOWER(CONCAT(:query, '%')) ESCAPE '!' THEN 0 ELSE 1 END,
               LENGTH(u.username),
               u.username
             """)

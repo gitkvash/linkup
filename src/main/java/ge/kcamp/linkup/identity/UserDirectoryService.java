@@ -85,10 +85,20 @@ public class UserDirectoryService {
             return List.of();
         }
         return userRepository
-                .searchByUsername(trimmed, excludeUserId, Limit.of(MAX_RESULTS))
+                .searchByUsername(escapeLikeWildcards(trimmed), excludeUserId, Limit.of(MAX_RESULTS))
                 .stream()
                 .map(UserDirectoryService::toSummary)
                 .toList();
+    }
+
+    /**
+     * A typed {@code %} or {@code _} is a literal character, not "match anything" - a bare
+     * {@code __} used to list every account. The escape character goes first, or escaping
+     * the other two would be undone. Same approach as the map search's, with {@code !} as
+     * the escape; see {@link UserRepository#searchByUsername}.
+     */
+    static String escapeLikeWildcards(String raw) {
+        return raw.replace("!", "!!").replace("%", "!%").replace("_", "!_");
     }
 
     private static UserSummary toSummary(ge.kcamp.linkup.identity.entity.User user) {

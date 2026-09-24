@@ -42,6 +42,13 @@ public class ActivityMapRepository {
     /**
      * Ceiling on rows fed into the clustering window. DBSCAN over an unbounded set is
      * the one query here a single request could use to hurt the database.
+     * <p>
+     * The CTE orders before it limits - soonest first, id as the tiebreak, the same
+     * order the outer query returns. Without it, a viewport holding more than this many
+     * plans got whichever rows the scan produced first: an arbitrary subset that could
+     * differ between two identical requests, so clusters jumped and counts changed while
+     * the user wasn't touching the map. Soonest first also keeps the plans most worth
+     * showing when the cap bites.
      */
     private static final int MAX_CLUSTERED_ROWS = 2000;
 
@@ -73,6 +80,7 @@ public class ActivityMapRepository {
                   AND l.geom_point && ST_MakeEnvelope(:minLng, :minLat, :maxLng, :maxLat, 4326)
                   AND %s
                   AND %s
+                ORDER BY a.start_time, a.activity_id
                 LIMIT %d
             ), clustered AS (
                 SELECT activity_id, title, activity_type, category, start_time, has_time,

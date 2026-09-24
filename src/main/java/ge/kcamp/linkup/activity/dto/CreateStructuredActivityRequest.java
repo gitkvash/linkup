@@ -4,6 +4,8 @@ import ge.kcamp.linkup.activity.enums.ActivityCategory;
 import ge.kcamp.linkup.activity.enums.ActivityVisibility;
 import ge.kcamp.linkup.activity.enums.RepeatFrequency;
 import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -20,6 +22,11 @@ import java.util.UUID;
  * over-long title reached Postgres, came back as a constraint violation, and was
  * reported to the user as "That conflicts with something that already exists" - a 409
  * about nothing they had done, for a field they could simply have shortened.
+ * <p>
+ * {@code lat}/{@code lng} are range-checked because nothing else checked them: an
+ * out-of-range point was stored as-is, where no map viewport can ever contain it and
+ * projecting it (the map's {@code ST_Transform} to Web Mercator) fails outright. The
+ * invitee cap matches {@code InviteRequest}: each id is an INSERT and a notification.
  *
  * @param hasTime  null (or omitted) means "not stated" - treated as {@code true} so older
  *                 clients that don't send it keep getting a timed activity, same as
@@ -40,12 +47,12 @@ public record CreateStructuredActivityRequest(
         @NotNull ZonedDateTime startTime,
         ZonedDateTime endTime,
         Boolean hasTime,
-        Double lat,
-        Double lng,
+        @DecimalMin("-90.0") @DecimalMax("90.0") Double lat,
+        @DecimalMin("-180.0") @DecimalMax("180.0") Double lng,
         @Size(max = 255) String addressText,
         @NotNull ActivityVisibility visibility,
         UUID groupId,
-        List<UUID> inviteeUserIds,
+        @Size(max = 100) List<@NotNull UUID> inviteeUserIds,
         ActivityCategory category,
         RepeatFrequency repeatFrequency,
         @Min(1) @Max(52) Integer repeatInterval,

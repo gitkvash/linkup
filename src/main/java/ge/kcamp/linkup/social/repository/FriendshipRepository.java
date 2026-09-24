@@ -44,30 +44,51 @@ public interface FriendshipRepository extends JpaRepository<Friendship, Friendsh
             """)
     List<Friendship> findByStatusForUser(@Param("userId") UUID userId, @Param("status") FriendshipStatus status);
 
-    @Query("""
-            SELECT count(f) FROM Friendship f
-            WHERE f.status = :status
-              AND (f.id.userAId = :userId OR f.id.userBId = :userId)
-            """)
-    long countByStatusForUser(@Param("userId") UUID userId, @Param("status") FriendshipStatus status);
-
     /**
      * Accepted-friend counts for many users in one round trip, for the feed's
      * influencer check. Counting them one at a time meant a user with N friends cost
      * N+1 queries per feed page, each hydrating that friend's whole friendship set.
      * <p>
-     * Native, because the two-column-key layout can't express "count per user across
-     * both sides" in JPQL without a CASE that breaks when both sides are in the set.
+     * Through {@code app_accepted_friend_counts} (V29), a SECURITY DEFINER function,
+     * rather than against the table. On a request connection {@code friendships} is
+     * filtered to the caller's own rows, so counting there gave every friend a count of
+     * one. The function counts every row and returns only the numbers. Users with no
+     * accepted friends are absent from the result.
+     */
+    default List<Object[]> countAcceptedFriendsGrouped(Collection<UUID> userIds) {
+        return countAcceptedFriendsGrouped(toArrayLiteral(userIds));
+    }
+
+    /**
+     * Takes the ids as one Postgres array literal ({@code {a,b}}) rather than a
+     * collection. Hibernate expands a collection parameter to {@code (?,?)} once it has
+     * two or more elements, so {@code ARRAY[:userIds]} became an array of one row and
+     * failed with "cannot cast type record to uuid" - only for a viewer with two or
+     * more friends, which no single-friend test notices.
      */
     @Query(value = """
-            SELECT uid, count(*) AS friend_count FROM (
-                SELECT user_a_id AS uid FROM friendships
-                 WHERE status = 'ACCEPTED' AND user_a_id IN (:userIds)
-                UNION ALL
-                SELECT user_b_id AS uid FROM friendships
-                 WHERE status = 'ACCEPTED' AND user_b_id IN (:userIds)
-            ) both_sides
-            GROUP BY uid
+            SELECT user_id, friend_count
+            FROM app_accepted_friend_counts(CAST(:userIds AS uuid[]))
             """, nativeQuery = true)
-    List<Object[]> countAcceptedFriendsGrouped(@Param("userIds") Collection<UUID> userIds);
+    List<Object[]> countAcceptedFriendsGrouped(@Param("userIds") String userIdsArrayLiteral);
+
+    private static String toArrayLiteral(Collection<UUID> userIds) {
+        StringBuilder literal = new StringBuilder("{");
+        for (UUID id : userIds) {
+            if (literal.length() > 1) {
+                literal.append(',');
+            }
+            literal.append(id);
+        }
+        return literal.append('}').toString();
+    }
+
+    /** The single-user form of {@link #countAcceptedFriendsGrouped}; zero when absent. */
+    @Query(value = """
+            SELECT COALESCE((
+                SELECT friend_count
+                FROM app_accepted_friend_counts(CAST(ARRAY[:userId] AS uuid[]))
+            ), 0)
+            """, nativeQuery = true)
+    long countAcceptedFriendsOf(@Param("userId") UUID userId);
 }

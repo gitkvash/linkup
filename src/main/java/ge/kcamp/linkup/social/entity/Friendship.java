@@ -22,7 +22,9 @@ public class Friendship {
 
     /**
      * Who initiated this edge. On a PENDING row, this is who's waiting for a response.
-     * On a BLOCKED row, this is (loosely) who applied the block.
+     * On a BLOCKED row, this is who applied the block - the first to, if both tried:
+     * {@code SocialGraphService.blockUser} never hands it to the other party, since
+     * only this user may lift it.
      */
     @Column(name = "requested_by")
     private UUID requestedBy;

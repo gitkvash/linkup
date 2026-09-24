@@ -4,6 +4,8 @@ import ge.kcamp.linkup.activity.enums.ActivityCategory;
 import ge.kcamp.linkup.activity.enums.ActivityVisibility;
 import ge.kcamp.linkup.activity.enums.RepeatFrequency;
 import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -18,6 +20,9 @@ import java.util.UUID;
  * a full replacement of the editable fields, not a sparse patch, because that is what
  * the edit form sends: it seeds itself from the current activity and posts the whole
  * form back.
+ * <p>
+ * Coordinates are range-checked for the reason given on
+ * {@link CreateStructuredActivityRequest}.
  * <p>
  * Invitees are deliberately absent. Who is coming is changed through join/respond, and
  * accepting a list here would silently re-invite people who had already declined.
@@ -41,8 +46,8 @@ public record UpdateActivityRequest(
         @NotNull ZonedDateTime startTime,
         ZonedDateTime endTime,
         Boolean hasTime,
-        Double lat,
-        Double lng,
+        @DecimalMin("-90.0") @DecimalMax("90.0") Double lat,
+        @DecimalMin("-180.0") @DecimalMax("180.0") Double lng,
         @Size(max = 255) String addressText,
         @NotNull ActivityVisibility visibility,
         UUID groupId,

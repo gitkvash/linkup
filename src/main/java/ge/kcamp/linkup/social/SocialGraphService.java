@@ -4,7 +4,6 @@ import ge.kcamp.linkup.social.entity.Friendship;
 import ge.kcamp.linkup.social.entity.FriendshipId;
 import ge.kcamp.linkup.social.enums.FriendshipStatus;
 import ge.kcamp.linkup.social.exception.FriendRequestNotFoundException;
-import ge.kcamp.linkup.social.exception.FriendshipBlockedException;
 import ge.kcamp.linkup.social.exception.SelfFriendRequestException;
 import ge.kcamp.linkup.social.repository.FriendshipRepository;
 import org.springframework.context.ApplicationEventPublisher;
@@ -43,6 +42,14 @@ public class SocialGraphService {
         this.eventPublisher = eventPublisher;
     }
 
+    /**
+     * A request into a blocked pair - in either direction - is accepted and dropped: no
+     * row changes and nothing is published, and the caller gets the same 204 a real
+     * request gets. It used to answer 403 "This friendship is blocked", which told the
+     * blocked person exactly what {@link #unblockUser} and {@link #getBlockedUsers} are
+     * careful never to reveal. The client's own request flow never relied on the 403:
+     * it only ever showed the message.
+     */
     @Transactional
     public void sendFriendRequest(UUID requesterId, UUID targetId) {
         if (requesterId.equals(targetId)) {
@@ -68,7 +75,7 @@ public class SocialGraphService {
 
         Friendship friendship = existing.get();
         switch (friendship.getStatus()) {
-            case BLOCKED -> throw new FriendshipBlockedException();
+            case BLOCKED -> { /* silently dropped - see the Javadoc */ }
             case ACCEPTED -> { /* already friends, no-op */ }
             case PENDING -> {
                 if (friendship.getRequestedBy().equals(targetId)) {
@@ -97,6 +104,20 @@ public class SocialGraphService {
         friendshipRepository.delete(friendship);
     }
 
+    /**
+     * Blocks {@code blockedId}, replacing whatever the pair had - a pending request, or
+     * an accepted friendship, in which case {@link FriendshipEndedEvent} is published so
+     * the feed can take back what the friendship gave each of them.
+     * <p>
+     * A pair the other party has already blocked is left exactly as it is. This used to
+     * overwrite {@code requestedBy} with the caller, which made them the blocker of
+     * record - and since {@link #unblockUser} only checks that the caller is the blocker,
+     * the blocked person could lift a block placed on them with two taps: block back,
+     * then unblock. The call still succeeds, so it reveals nothing about who blocked
+     * whom; the price is that the caller's own block isn't recorded while the other one
+     * stands (the pair has a single row), so it doesn't survive the other side lifting
+     * theirs.
+     */
     @Transactional
     public void blockUser(UUID blockerId, UUID blockedId) {
         if (blockerId.equals(blockedId)) {
@@ -105,23 +126,38 @@ public class SocialGraphService {
 
         UUID a = canonicalFirst(blockerId, blockedId);
         UUID b = canonicalSecond(blockerId, blockedId);
-        Friendship friendship = friendshipRepository.findByIdUserAIdAndIdUserBId(a, b)
-                .orElseGet(() -> {
-                    Friendship f = new Friendship();
-                    f.setId(pairId(a, b));
-                    return f;
-                });
+        Optional<Friendship> existing = friendshipRepository.findByIdUserAIdAndIdUserBId(a, b);
+
+        if (existing.isPresent() && existing.get().getStatus() == FriendshipStatus.BLOCKED) {
+            // Already blocked - by the caller (nothing to do) or by the other party (must
+            // not be taken over; see the Javadoc).
+            return;
+        }
+
+        boolean endsFriendship = existing
+                .map(friendship -> friendship.getStatus() == FriendshipStatus.ACCEPTED)
+                .orElse(false);
+
+        Friendship friendship = existing.orElseGet(() -> {
+            Friendship f = new Friendship();
+            f.setId(pairId(a, b));
+            return f;
+        });
         friendship.setStatus(FriendshipStatus.BLOCKED);
         friendship.setRequestedBy(blockerId);
         friendshipRepository.save(friendship);
+
+        if (endsFriendship) {
+            eventPublisher.publishEvent(new FriendshipEndedEvent(a, b, Instant.now()));
+        }
     }
 
     /**
      * Lifts a block the caller applied, leaving the two as strangers who may request
      * each other again.
      * <p>
-     * Blocking used to be a one-way door for <em>both</em> parties: a BLOCKED row makes
-     * {@code sendFriendRequest} throw regardless of who set it, {@link #unfriend} only
+     * Blocking used to be a one-way door for <em>both</em> parties: a BLOCKED row stops
+     * {@code sendFriendRequest} regardless of who set it, {@link #unfriend} only
      * removes ACCEPTED rows, and nothing listed the pair - so a mis-tap on Block ended a
      * friendship permanently, including for the person who did it.
      * <p>
@@ -172,14 +208,56 @@ public class SocialGraphService {
         return friendshipRepository.findFriendIdsByStatus(userId, FriendshipStatus.ACCEPTED);
     }
 
+    /**
+     * Whether the two are accepted friends. A blocked pair is not, so this is also the
+     * check that keeps a blocked user out of anything gated on friendship.
+     */
+    @Transactional(readOnly = true)
+    public boolean areFriends(UUID userId, UUID otherId) {
+        if (userId == null || otherId == null || userId.equals(otherId)) {
+            return false;
+        }
+        return friendshipRepository
+                .findByIdUserAIdAndIdUserBId(canonicalFirst(userId, otherId), canonicalSecond(userId, otherId))
+                .filter(friendship -> friendship.getStatus() == FriendshipStatus.ACCEPTED)
+                .isPresent();
+    }
+
+    /**
+     * Whether either of the two has blocked the other. The pair's one row is readable by
+     * both parties under {@code friendships_select_policy}, whichever side placed it.
+     */
+    @Transactional(readOnly = true)
+    public boolean isBlockedEitherWay(UUID userId, UUID otherId) {
+        if (userId == null || otherId == null || userId.equals(otherId)) {
+            return false;
+        }
+        return friendshipRepository
+                .findByIdUserAIdAndIdUserBId(canonicalFirst(userId, otherId), canonicalSecond(userId, otherId))
+                .filter(friendship -> friendship.getStatus() == FriendshipStatus.BLOCKED)
+                .isPresent();
+    }
+
+    /**
+     * Any user's accepted-friend count, whoever is asking. Goes through the
+     * {@code app_accepted_friend_counts} function (V29) rather than the table, for the
+     * reason given on {@link #countAcceptedFriendsFor}.
+     */
     @Transactional(readOnly = true)
     public long countAcceptedFriends(UUID userId) {
-        return friendshipRepository.countByStatusForUser(userId, FriendshipStatus.ACCEPTED);
+        return friendshipRepository.countAcceptedFriendsOf(userId);
     }
 
     /**
      * Accepted-friend counts for a batch of users, in a single query. Users with no
      * accepted friendships are absent from the map rather than mapped to zero.
+     * <p>
+     * Correct on a request thread too. The feed calls this while serving a page, as
+     * {@code linkup_app}, and reading {@code friendships} directly there is filtered by
+     * {@code friendships_select_policy} to the rows involving the caller - so every
+     * friend counted as having exactly one friend (the caller), the read side never saw
+     * an influencer, and their plans, which the write side had declined to fan out,
+     * reached nobody. The V29 function counts as the owner and exposes counts only.
      */
     @Transactional(readOnly = true)
     public Map<UUID, Long> countAcceptedFriendsFor(Collection<UUID> userIds) {
@@ -231,7 +309,10 @@ public class SocialGraphService {
                 .toList();
     }
 
-    /** Removes an accepted friendship. Declining only ever applied to PENDING rows. */
+    /**
+     * Removes an accepted friendship and publishes {@link FriendshipEndedEvent}.
+     * Declining only ever applied to PENDING rows.
+     */
     @Transactional
     public void unfriend(UUID userId, UUID otherId) {
         if (userId.equals(otherId)) {
@@ -241,7 +322,12 @@ public class SocialGraphService {
                 .findByIdUserAIdAndIdUserBId(
                         canonicalFirst(userId, otherId), canonicalSecond(userId, otherId))
                 .filter(friendship -> friendship.getStatus() == FriendshipStatus.ACCEPTED)
-                .ifPresentOrElse(friendshipRepository::delete, () -> {
+                .ifPresentOrElse(friendship -> {
+                    friendshipRepository.delete(friendship);
+                    // So the feed can take back what FriendshipAcceptedEvent backfilled.
+                    eventPublisher.publishEvent(new FriendshipEndedEvent(
+                            friendship.getId().getUserAId(), friendship.getId().getUserBId(), Instant.now()));
+                }, () -> {
                     throw new FriendRequestNotFoundException();
                 });
     }

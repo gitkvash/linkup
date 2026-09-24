@@ -1,5 +1,7 @@
 package ge.kcamp.linkup.activity.command;
 
+import ge.kcamp.linkup.activity.ActivityDeletedEvent;
+import ge.kcamp.linkup.activity.ActivityUpdatedEvent;
 import ge.kcamp.linkup.activity.CasualPlanSpec;
 import ge.kcamp.linkup.activity.StructuredEventSpec;
 import ge.kcamp.linkup.activity.entity.Activity;
@@ -13,9 +15,11 @@ import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.Point;
 import org.locationtech.jts.geom.PrecisionModel;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.UUID;
@@ -37,17 +41,20 @@ public class ActivityCommandHandler {
     private final LocationRepository locationRepository;
     private final NlpParserService nlpParserService;
     private final ActivityPersistenceService activityPersistenceService;
+    private final ApplicationEventPublisher eventPublisher;
     private final GeometryFactory geometryFactory = new GeometryFactory(new PrecisionModel(), WGS84_SRID);
 
     public ActivityCommandHandler(
             ActivityRepository activityRepository,
             LocationRepository locationRepository,
             NlpParserService nlpParserService,
-            ActivityPersistenceService activityPersistenceService) {
+            ActivityPersistenceService activityPersistenceService,
+            ApplicationEventPublisher eventPublisher) {
         this.activityRepository = activityRepository;
         this.locationRepository = locationRepository;
         this.nlpParserService = nlpParserService;
         this.activityPersistenceService = activityPersistenceService;
+        this.eventPublisher = eventPublisher;
     }
 
     /**
@@ -112,11 +119,13 @@ public class ActivityCommandHandler {
      * sends. Participants are untouched: who is coming is changed through join/respond,
      * and re-deriving it here would resurrect invitations people had already declined.
      * <p>
-     * No event is published. {@code ActivityCreatedEvent} means "a new plan exists" -
-     * feed fan-out and an ACTIVITY_INVITE notification both follow from it, and neither
-     * is true of an edit. One consequence to know about: a timeline entry keeps the
-     * Redis score it was written with, so moving a plan's start time re-sorts it in the
-     * feed (the score is recomputed on read) without moving it in the stored timeline.
+     * Publishes {@link ActivityUpdatedEvent}, not {@code ActivityCreatedEvent}: that one
+     * means "a new plan exists", and the ACTIVITY_INVITE notification and first fan-out
+     * that follow from it are not true of an edit. With no event at all, a timeline
+     * entry kept the Redis score it was written with, so a moved start time left the
+     * stored score and the one the feed's cursor is computed from disagreeing - the plan
+     * was skipped or repeated at a page boundary. Published inside this transaction, the
+     * way {@code ActivityCreatedEvent} is, so it is only registered if the edit commits.
      */
     @Transactional
     public Activity handle(UpdateActivityCommand command) {
@@ -155,19 +164,24 @@ public class ActivityCommandHandler {
 
         Activity saved = activityRepository.save(activity);
         applyLocation(saved, command.lat(), command.lng(), command.addressText());
+
+        eventPublisher.publishEvent(new ActivityUpdatedEvent(
+                saved.getId(), saved.getCreatorId(), saved.getStartTime(), audienceGroupId, Instant.now()));
         return saved;
     }
 
     /**
      * Cancels a plan. {@code participants} and {@code locations} go with it through
-     * {@code ON DELETE CASCADE} (V14). Feed timelines are not swept: they hold ids, and
-     * the feed resolves those through the query service, so a deleted plan simply stops
-     * appearing.
+     * {@code ON DELETE CASCADE} (V14). Publishes {@link ActivityDeletedEvent}, in this
+     * transaction, so the feed can drop the id from the timelines it was fanned out to
+     * rather than keeping it until it ages out.
      */
     @Transactional
     public void handle(DeleteActivityCommand command) {
         Activity activity = requireOwned(command.activityId(), command.actorId());
         activityRepository.delete(activity);
+        eventPublisher.publishEvent(new ActivityDeletedEvent(
+                activity.getId(), activity.getCreatorId(), Instant.now()));
     }
 
     /**

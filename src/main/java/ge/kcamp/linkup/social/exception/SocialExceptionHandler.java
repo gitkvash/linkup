@@ -30,6 +30,12 @@ public class SocialExceptionHandler {
         return ApiError.of(HttpStatus.NOT_FOUND, ex.getMessage(), ApiError.NOT_FOUND);
     }
 
+    /** 400 with the reason, which the client shows as-is. */
+    @ExceptionHandler(GroupMemberNotFriendException.class)
+    public ResponseEntity<Map<String, Object>> handleNotFriend(GroupMemberNotFriendException ex) {
+        return ApiError.of(HttpStatus.BAD_REQUEST, ex.getMessage(), ApiError.VALIDATION_FAILED);
+    }
+
     @ExceptionHandler(GroupNotOwnedException.class)
     public ResponseEntity<Map<String, Object>> handleNotOwned(GroupNotOwnedException ex) {
         return ApiError.of(HttpStatus.FORBIDDEN, ex.getMessage(), ApiError.ACCESS_DENIED);

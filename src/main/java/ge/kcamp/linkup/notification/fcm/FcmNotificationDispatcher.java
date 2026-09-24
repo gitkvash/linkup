@@ -8,11 +8,21 @@ import ge.kcamp.linkup.notification.repository.DeviceTokenRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
+/**
+ * Pushes through FCM. The database is touched in two short transactions - reading the
+ * recipient's tokens, and pruning the dead ones afterwards - with the {@code sendEach}
+ * round trip between them holding no connection. It used to run entirely inside the
+ * listener's transaction, so every push held a pooled connection for as long as
+ * Google took to answer.
+ */
 @Component
 public class FcmNotificationDispatcher implements NotificationDispatcher {
 
@@ -22,10 +32,18 @@ public class FcmNotificationDispatcher implements NotificationDispatcher {
 
     private final FcmClientProvider clientProvider;
     private final DeviceTokenRepository deviceTokenRepository;
+    private final TransactionTemplate readTransaction;
+    private final TransactionTemplate writeTransaction;
 
-    public FcmNotificationDispatcher(FcmClientProvider clientProvider, DeviceTokenRepository deviceTokenRepository) {
+    public FcmNotificationDispatcher(
+            FcmClientProvider clientProvider,
+            DeviceTokenRepository deviceTokenRepository,
+            PlatformTransactionManager transactionManager) {
         this.clientProvider = clientProvider;
         this.deviceTokenRepository = deviceTokenRepository;
+        this.readTransaction = new TransactionTemplate(transactionManager);
+        this.readTransaction.setReadOnly(true);
+        this.writeTransaction = new TransactionTemplate(transactionManager);
     }
 
     // firebase-admin deprecates all FCM-registration-token targeting (both
@@ -44,8 +62,9 @@ public class FcmNotificationDispatcher implements NotificationDispatcher {
             return;
         }
 
-        List<DeviceToken> tokens = deviceTokenRepository.findByIdUserId(message.recipientUserId());
-        if (tokens.isEmpty()) {
+        List<DeviceToken> tokens = readTransaction.execute(
+                status -> deviceTokenRepository.findByIdUserId(message.recipientUserId()));
+        if (tokens == null || tokens.isEmpty()) {
             return;
         }
 
@@ -83,12 +102,21 @@ public class FcmNotificationDispatcher implements NotificationDispatcher {
 
     private void pruneInvalidTokens(List<DeviceToken> tokens, BatchResponse response) {
         List<SendResponse> responses = response.getResponses();
+        List<DeviceToken> dead = new ArrayList<>();
         for (int i = 0; i < responses.size() && i < tokens.size(); i++) {
             SendResponse sendResponse = responses.get(i);
             if (!sendResponse.isSuccessful() && sendResponse.getException() != null
                     && PRUNABLE_ERRORS.contains(sendResponse.getException().getMessagingErrorCode())) {
-                deviceTokenRepository.delete(tokens.get(i));
+                dead.add(tokens.get(i));
             }
         }
+        if (dead.isEmpty()) {
+            return;
+        }
+        // Keyed on (user, token) - the row that was read - so a token that moved to
+        // another account since the read is left alone.
+        writeTransaction.executeWithoutResult(status -> dead.forEach(token ->
+                deviceTokenRepository.deleteByUserIdAndFcmToken(
+                        token.getId().getUserId(), token.getId().getFcmToken())));
     }
 }

@@ -18,7 +18,7 @@ public record CreateActivityFromTextRequest(
         @NotBlank @Size(max = 500) String rawText,
         @NotNull ActivityVisibility visibility,
         UUID groupId,
-        List<UUID> inviteeUserIds,
+        @Size(max = 100) List<@NotNull UUID> inviteeUserIds,
         String timeZone
 ) {
 }

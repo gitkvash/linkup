@@ -15,7 +15,9 @@ package ge.kcamp.linkup;
  * role both would return zero rows and no error - a policy that matches nothing looks
  * exactly like data that does not exist.
  *
- * <p>Nothing calls {@link #runAsSystem} by hand. The marker is applied to whole threads by
+ * <p>Almost nothing calls {@link #runAsSystem} by hand - the one exception is
+ * {@code DeviceTokenService.claim}, which must take a device's token off whichever other
+ * account held it, a row the caller's policy cannot see. Otherwise the marker is applied to whole threads by
  * the {@code TaskDecorator} on the async executor in {@code DataSourceConfig}, so the rule
  * is one sentence: <em>work that is not serving an HTTP request runs as the system role.</em>
  * Doing it at the executor rather than around each call also sidesteps a subtlety - by the

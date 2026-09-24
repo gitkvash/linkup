@@ -3,6 +3,7 @@ package ge.kcamp.linkup.identity.exception;
 import ge.kcamp.linkup.ApiError;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -55,5 +56,18 @@ public class IdentityExceptionHandler {
     @ExceptionHandler(SessionExpiredException.class)
     public ResponseEntity<Map<String, Object>> handleSessionExpired(SessionExpiredException ex) {
         return ApiError.of(HttpStatus.UNAUTHORIZED, ex.getMessage(), ApiError.SESSION_EXPIRED);
+    }
+
+    /**
+     * The per-username login limit. Same status, code and header as the per-IP limit that
+     * {@code RateLimitFilter} writes, so the client has one "slow down" to handle.
+     */
+    @ExceptionHandler(RateLimitExceededException.class)
+    public ResponseEntity<Map<String, Object>> handleRateLimited(RateLimitExceededException ex) {
+        ResponseEntity<Map<String, Object>> error =
+                ApiError.of(HttpStatus.TOO_MANY_REQUESTS, ex.getMessage(), ApiError.RATE_LIMITED);
+        return ResponseEntity.status(error.getStatusCode())
+                .header(HttpHeaders.RETRY_AFTER, Long.toString(ex.getRetryAfterSeconds()))
+                .body(error.getBody());
     }
 }

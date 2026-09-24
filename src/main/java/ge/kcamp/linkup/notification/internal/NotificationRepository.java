@@ -1,5 +1,6 @@
 package ge.kcamp.linkup.notification.internal;
 
+import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -11,9 +12,12 @@ import java.util.UUID;
 
 public interface NotificationRepository extends JpaRepository<Notification, UUID> {
 
-    List<Notification> findByRecipientUserIdOrderByCreatedAtDesc(UUID recipientUserId);
-
-    boolean existsByDedupeKey(String dedupeKey);
+    /**
+     * Newest first, at most {@code limit} rows. Served by
+     * {@code idx_notifications_recipient_created} (V10). The id breaks ties so rows
+     * written in the same instant come back in a stable order.
+     */
+    List<Notification> findByRecipientUserIdOrderByCreatedAtDescIdDesc(UUID recipientUserId, Limit limit);
 
     long countByRecipientUserIdAndReadAtIsNull(UUID recipientUserId);
 

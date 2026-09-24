@@ -20,6 +20,10 @@ management:
       probability: 1.0
 
 linkup:
+  rate-limit:
+    # The verify-*.sh scripts register and sign in far more than 20 times a minute from
+    # one address. Set LINKUP_RATE_LIMIT_ENABLED=true to exercise the limiter locally.
+    enabled: ${LINKUP_RATE_LIMIT_ENABLED:false}
   datasource:
     app:
       # Must match the app_db_password placeholder above - that is what V17 created the

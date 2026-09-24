@@ -10,6 +10,7 @@ import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
 import java.security.Key;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.Optional;
@@ -60,7 +61,7 @@ public class JwtUtil {
      */
     public JwtUtil(
             @Value("${linkup.security.jwt.secret}") String base64Secret,
-            @Value("${linkup.security.jwt.expiration-ms:86400000}") long expirationMs,
+            @Value("${linkup.security.jwt.expiration-ms:900000}") long expirationMs,
             @Value("${linkup.security.jwt.refresh-expiration-ms:15552000000}") long refreshExpirationMs,
             Environment environment) {
 
@@ -119,15 +120,29 @@ public class JwtUtil {
                 .compact();
     }
 
-    /** Only good for {@code POST /auth/refresh}; {@link #parseUserId} refuses it. */
-    public String generateRefreshToken(UUID userId) {
-        return Jwts.builder()
+    /**
+     * Only good for {@code POST /auth/refresh}; {@link #parseUserId} refuses it.
+     * <p>
+     * Carries a random {@code jti}, which is the key of the server-side row that makes the
+     * token revocable (V28). The caller persists that row; a token whose row is missing is
+     * refused, so an unpersisted token is useless rather than dangerous.
+     */
+    public IssuedRefreshToken generateRefreshToken(UUID userId) {
+        UUID jti = UUID.randomUUID();
+        // One clock read for both claims and the returned instants, so the row's
+        // expires_at is the token's exp (to the second - JWT times carry no millis).
+        long now = System.currentTimeMillis();
+        Date issuedAt = new Date(now);
+        Date expiresAt = new Date(now + refreshExpirationMs);
+        String token = Jwts.builder()
                 .setSubject(userId.toString())
+                .setId(jti.toString())
                 .claim(TYPE_CLAIM, REFRESH)
-                .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + refreshExpirationMs))
+                .setIssuedAt(issuedAt)
+                .setExpiration(expiresAt)
                 .signWith(key)
                 .compact();
+        return new IssuedRefreshToken(token, jti, issuedAt.toInstant(), expiresAt.toInstant());
     }
 
     public UUID getUserIdFromToken(String token) {
@@ -147,22 +162,54 @@ public class JwtUtil {
         return parseSubject(token, false);
     }
 
-    /** The user a refresh token was issued to, if it is one, valid and unexpired. */
-    public Optional<UUID> parseRefreshUserId(String token) {
-        return parseSubject(token, true);
+    /**
+     * Who a refresh token was issued to and which one it is, if it is a refresh token,
+     * validly signed and unexpired. This only proves the token is genuine; whether it is
+     * still usable is the {@code refresh_tokens} row's call.
+     * <p>
+     * Empty for a refresh token with no {@code jti}. Those were issued before refresh
+     * tokens became revocable, cannot be matched to a row, and would otherwise stay valid
+     * for up to six months with no way to end them - so they cost one sign-in instead.
+     */
+    public Optional<RefreshClaims> parseRefreshToken(String token) {
+        return parseClaims(token, true).flatMap(claims -> {
+            if (claims.getId() == null) {
+                return Optional.empty();
+            }
+            return Optional.of(new RefreshClaims(
+                    UUID.fromString(claims.getSubject()), UUID.fromString(claims.getId())));
+        });
     }
 
     private Optional<UUID> parseSubject(String token, boolean refresh) {
+        return parseClaims(token, refresh).map(claims -> UUID.fromString(claims.getSubject()));
+    }
+
+    private Optional<Claims> parseClaims(String token, boolean refresh) {
         try {
             Claims claims = parser.parseClaimsJws(token).getBody();
             boolean isRefresh = REFRESH.equals(claims.get(TYPE_CLAIM, String.class));
             if (isRefresh != refresh) {
                 return Optional.empty();
             }
-            return Optional.of(UUID.fromString(claims.getSubject()));
+            // Resolved inside the try: a subject or jti that isn't a UUID is a malformed
+            // token like any other, not a 500 from the lambda that reads it later.
+            UUID.fromString(claims.getSubject());
+            if (claims.getId() != null) {
+                UUID.fromString(claims.getId());
+            }
+            return Optional.of(claims);
         } catch (RuntimeException e) {
             return Optional.empty();
         }
+    }
+
+    /** What a genuine refresh token says about itself. */
+    public record RefreshClaims(UUID userId, UUID jti) {
+    }
+
+    /** A signed refresh token plus what its server-side row needs. */
+    public record IssuedRefreshToken(String token, UUID jti, Instant issuedAt, Instant expiresAt) {
     }
 
     public <T> T getClaimFromToken(String token, Function<Claims, T> claimsResolver) {
