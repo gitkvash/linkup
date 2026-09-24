@@ -1,6 +1,11 @@
 package ge.kcamp.linkup.feed;
 
 import ge.kcamp.linkup.AbstractIntegrationTest;
+import ge.kcamp.linkup.activity.entity.Activity;
+import ge.kcamp.linkup.activity.enums.ActivityCategory;
+import ge.kcamp.linkup.activity.enums.ActivityType;
+import ge.kcamp.linkup.activity.enums.ActivityVisibility;
+import ge.kcamp.linkup.activity.repository.ActivityRepository;
 import ge.kcamp.linkup.social.GroupService;
 import ge.kcamp.linkup.social.SocialGraphService;
 import org.junit.jupiter.api.Test;
@@ -9,6 +14,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -29,6 +35,9 @@ class FeedFanOutServiceIT extends AbstractIntegrationTest {
 
     @Autowired
     private GroupService groupService;
+
+    @Autowired
+    private ActivityRepository activityRepository;
 
     @Test
     void fanOutOnWritePushesToBothCreatorAndAcceptedFriendTimelines() {
@@ -84,6 +93,38 @@ class FeedFanOutServiceIT extends AbstractIntegrationTest {
         Double justAbove = FeedTimelineScore.of(activityId, startTime) + 1;
         assertThat(timelineRepository.read(creatorId, justAbove, 10)).contains(activityId);
         assertThat(timelineRepository.read(memberId, justAbove, 10)).contains(activityId);
+    }
+
+    /**
+     * Fan-out runs once, at creation, so a plan made before two people became friends
+     * never reached the new friend's feed - only the map. Accepting the request brings
+     * the other side's plans that are still on, and leaves the ended ones out.
+     */
+    @Test
+    void aNewFriendshipBringsTheOtherSidesPlansThatAreStillOn() {
+        UUID creatorId = UUID.randomUUID();
+        UUID friendId = UUID.randomUUID();
+        UUID upcoming = createPublicPlan(creatorId, ZonedDateTime.now().plusHours(2));
+        UUID ended = createPublicPlan(creatorId, ZonedDateTime.now().minusHours(5));
+
+        socialGraphService.sendFriendRequest(creatorId, friendId);
+        socialGraphService.acceptFriendRequest(friendId, creatorId);
+        feedFanOutService.backfillNewFriendship(creatorId, friendId);
+
+        List<UUID> friendTimeline = timelineRepository.read(friendId, null, 10);
+        assertThat(friendTimeline).contains(upcoming);
+        assertThat(friendTimeline).doesNotContain(ended);
+    }
+
+    private UUID createPublicPlan(UUID creatorId, ZonedDateTime startTime) {
+        return activityRepository.save(Activity.builder()
+                .creatorId(creatorId)
+                .activityType(ActivityType.SPECIFIC_EVENT)
+                .title("backfill probe")
+                .visibility(ActivityVisibility.PUBLIC)
+                .category(ActivityCategory.GENERAL)
+                .startTime(startTime)
+                .build()).getId();
     }
 
     /** The read cursor is exclusive, so an item is never served twice. */

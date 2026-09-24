@@ -281,6 +281,16 @@ has "feed items carry status" "$FEED" '"status"'
 has "feed items carry category" "$FEED" '"category":"'
 has "and hasTime" "$FEED" '"hasTime":'
 has "and activityType" "$FEED" '"activityType":"'
+# Fan-out runs once, when a plan is created. A plan made by someone who only becomes a
+# friend afterwards used to stay on the map and never reach the feed at all.
+C="cc_c_$STAMP"; RC=$(reg "$C"); TC=$(jsonf "$RC" token); IDC=$(jsonf "$RC" userId)
+AUTHC="Authorization: Bearer $TC"
+LATE=$(curl -s -X POST "$API/activities" -H "$JSON" -H "$AUTHC" -d '{"title":"made before we were friends","startTime":"2031-06-01T10:00:00Z","visibility":"PUBLIC"}')
+LATE_ID=$(jsonf "$LATE" id)
+curl -s -o /dev/null -X POST "$API/friends/request" -H "$JSON" -H "$AUTHC" -d "{\"targetUserId\":\"$IDB\"}"
+curl -s -o /dev/null -X POST "$API/friends/accept" -H "$JSON" -H "$AUTHB" -d "{\"targetUserId\":\"$IDC\"}"
+sleep 2  # the backfill is an async module listener
+has "a new friend's earlier plan reaches the feed" "$(curl -s -H "$AUTHB" "$API/feed?limit=50")" "${LATE_ID:-missing-id}"
 
 echo "== notifications: what notification_api.dart calls =="
 NOTIFS=$(curl -s -H "$AUTHB" "$API/notifications")

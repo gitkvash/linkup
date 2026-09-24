@@ -1,6 +1,7 @@
 package ge.kcamp.linkup.feed;
 
 import ge.kcamp.linkup.activity.ActivityCreatedEvent;
+import ge.kcamp.linkup.social.FriendshipAcceptedEvent;
 import org.springframework.modulith.events.ApplicationModuleListener;
 import org.springframework.stereotype.Component;
 
@@ -27,5 +28,14 @@ class FeedFanOutEventListener {
         // every cursor the client sent back pointed above the entire timeline.
         feedFanOutService.fanOutOnWrite(
                 event.creatorId(), event.activityId(), event.startTime().toInstant(), event.groupId());
+    }
+
+    /**
+     * Safe to redeliver: a timeline is a sorted set keyed by activity, so pushing the
+     * same plan twice leaves one entry with the same score.
+     */
+    @ApplicationModuleListener
+    void onFriendshipAccepted(FriendshipAcceptedEvent event) {
+        feedFanOutService.backfillNewFriendship(event.userAId(), event.userBId());
     }
 }
