@@ -5,6 +5,7 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.time.Instant;
 import java.util.UUID;
 
 @Getter
@@ -28,4 +29,18 @@ public class Friendship {
      */
     @Column(name = "requested_by")
     private UUID requestedBy;
+
+    /** When the pair became friends. Null for friendships accepted before V35 recorded it. */
+    @Column(name = "accepted_at")
+    private Instant acceptedAt;
+
+    /**
+     * Whether user A has muted user B's plans, and the reverse. Directional, and
+     * meaningful only while the row is ACCEPTED - see {@code V35__friend_profile.sql}.
+     */
+    @Column(name = "a_muted_b", nullable = false)
+    private boolean mutedByA;
+
+    @Column(name = "b_muted_a", nullable = false)
+    private boolean mutedByB;
 }

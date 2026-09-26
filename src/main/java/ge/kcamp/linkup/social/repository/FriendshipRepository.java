@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -91,4 +92,27 @@ public interface FriendshipRepository extends JpaRepository<Friendship, Friendsh
             ), 0)
             """, nativeQuery = true)
     long countAcceptedFriendsOf(@Param("userId") UUID userId);
+
+    /**
+     * The people this user has muted: the other party on each of their accepted rows
+     * where their own side's flag is set. The other side's flag is theirs, and never read.
+     */
+    @Query("""
+            SELECT CASE WHEN f.id.userAId = :userId THEN f.id.userBId ELSE f.id.userAId END
+            FROM Friendship f
+            WHERE f.status = ge.kcamp.linkup.social.enums.FriendshipStatus.ACCEPTED
+              AND ((f.id.userAId = :userId AND f.mutedByA = true)
+                OR (f.id.userBId = :userId AND f.mutedByB = true))
+            """)
+    List<UUID> findMutedIds(@Param("userId") UUID userId);
+
+    /** Friendships this user began in {@code [from, to)}. Rows from before V35 have no date. */
+    @Query("""
+            SELECT count(f) FROM Friendship f
+            WHERE f.status = ge.kcamp.linkup.social.enums.FriendshipStatus.ACCEPTED
+              AND (f.id.userAId = :userId OR f.id.userBId = :userId)
+              AND f.acceptedAt >= :from AND f.acceptedAt < :to
+            """)
+    long countAcceptedBetween(
+            @Param("userId") UUID userId, @Param("from") Instant from, @Param("to") Instant to);
 }

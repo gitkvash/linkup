@@ -155,6 +155,21 @@ public class GroupService {
     }
 
     /**
+     * Groups the caller shares with someone else, for their profile. Only groups the
+     * caller is in can match, so this names nothing they couldn't already open.
+     */
+    @Transactional(readOnly = true)
+    public List<CommonGroup> groupsInCommon(UUID userId, UUID otherId) {
+        if (userId == null || otherId == null || userId.equals(otherId)) {
+            return List.of();
+        }
+        return groupMemberRepository.findGroupsInCommon(userId, otherId).stream()
+                .map(row -> new CommonGroup(
+                        (UUID) row[0], (String) row[1], ((Number) row[2]).longValue()))
+                .toList();
+    }
+
+    /**
      * Part of this module's public API: {@code activity} needs it to check that a plan
      * being shared with a group is being shared by somebody in that group.
      *

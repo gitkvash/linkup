@@ -5,6 +5,7 @@ import ge.kcamp.linkup.activity.ActivityQueryService;
 import ge.kcamp.linkup.feed.dto.FeedItemDto;
 import ge.kcamp.linkup.feed.dto.FeedPageDto;
 import ge.kcamp.linkup.identity.UserDirectoryService;
+import ge.kcamp.linkup.social.SocialGraphService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,16 +33,19 @@ public class FeedQueryService {
     private final ActivityQueryService activityQueryService;
     private final FeedFanOutService feedFanOutService;
     private final UserDirectoryService userDirectoryService;
+    private final SocialGraphService socialGraphService;
 
     public FeedQueryService(
             RedisFeedTimelineRepository timelineRepository,
             ActivityQueryService activityQueryService,
             FeedFanOutService feedFanOutService,
-            UserDirectoryService userDirectoryService) {
+            UserDirectoryService userDirectoryService,
+            SocialGraphService socialGraphService) {
         this.timelineRepository = timelineRepository;
         this.activityQueryService = activityQueryService;
         this.feedFanOutService = feedFanOutService;
         this.userDirectoryService = userDirectoryService;
+        this.socialGraphService = socialGraphService;
     }
 
     /**
@@ -67,8 +71,15 @@ public class FeedQueryService {
         // Nothing below the part of the timeline this page actually scanned: an item from
         // the pulled half down there would be served now, and then the cursor would have
         // to skip the unscanned timeline entries above it to avoid serving it twice.
+        //
+        // Muted friends' plans are left out here, on read, rather than kept out of the
+        // timeline: unmuting then brings them straight back, with no backfill to wait for.
+        // A plan the viewer is in (invited or joined) still shows - muting someone is
+        // about their plans, not about the ones they asked you to.
+        Set<UUID> muted = socialGraphService.getMutedIds(userId);
         List<ActivityFeedItem> ordered = new ArrayList<>(deduped.values().stream()
                 .filter(item -> scoreOf(item) >= timeline.floor())
+                .filter(item -> item.viewerStatus() != null || !muted.contains(item.creatorId()))
                 .toList());
         ordered.sort(Comparator.comparingDouble(FeedQueryService::scoreOf).reversed());
 

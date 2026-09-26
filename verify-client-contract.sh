@@ -200,6 +200,26 @@ has "the invitation notification carries activityId" "$(curl -s -H "$AUTHB" "$AP
 has "POST /activities/{id}/respond?going=true accepts it" "$(curl -s -X POST -H "$AUTHB" "$API/activities/$NPID/respond?going=true")" 'JOINED'
 check "cleaning up the place-less plan" 204 "$(code -X DELETE -H "$AUTHA" "$API/activities/$NPID")"
 
+# ActivityApi.cancelActivity - the host calls a plan off without deleting it. A plan of
+# its own, not $AID, which has to stay live for the map and feed checks below. The plan
+# stays readable to the people in it, reading CANCELLED, and they are told.
+CANCELME=$(curl -s -X POST "$API/activities" -H "$JSON" -H "$AUTHA" -d '{
+  "title":"Called off","startTime":"2031-03-06T18:00:00.000Z","hasTime":true,
+  "lat":null,"lng":null,"addressText":null,"visibility":"PRIVATE","inviteeUserIds":[]}')
+CID=$(jsonf "$CANCELME" id)
+curl -s -o /dev/null -X POST "$API/activities/$CID/invites" -H "$JSON" -H "$AUTHA" -d "{\"userIds\":[\"$IDB\"]}"
+curl -s -o /dev/null -X POST -H "$AUTHB" "$API/activities/$CID/respond?going=true"
+check "someone else cannot cancel your plan" 404 "$(code -X POST -H "$AUTHB" "$API/activities/$CID/cancel")"
+has "POST /activities/{id}/cancel cancels it" "$(curl -s -X POST -H "$AUTHA" "$API/activities/$CID/cancel")" '"status":"CANCELLED"'
+check "cancelling it again is a no-op" 200 "$(code -X POST -H "$AUTHA" "$API/activities/$CID/cancel")"
+has "a guest still sees the cancelled plan" "$(curl -s -H "$AUTHB" "$API/activities/$CID")" '"status":"CANCELLED"'
+sleep 1
+has "the guest is told it was cancelled" "$(curl -s -H "$AUTHB" "$API/notifications")" '"ACTIVITY_CANCELLED"'
+# Ending it records that it happened; a plan that happened can't be called off after.
+curl -s -o /dev/null -X POST -H "$AUTHA" "$API/activities/$CID/end"
+check "a plan that already happened cannot be cancelled" 400 "$(code -X POST -H "$AUTHA" "$API/activities/$CID/cancel")"
+check "cleaning up the cancelled plan" 204 "$(code -X DELETE -H "$AUTHA" "$API/activities/$CID")"
+
 # ActivityApi.startActivity / endActivity - the host's two lifecycle controls. Both
 # answer with the read model, so the detail screen re-renders without a second GET.
 STARTED=$(curl -s -X POST -H "$AUTHA" "$API/activities/$AID/start")
@@ -355,6 +375,38 @@ check "an unknown path is 404, not 500" 404 "$(code -H "$AUTHA" "$API/nope")"
 check "a wrong method is 405, not 500" 405 "$(code -X PUT -H "$AUTHA" "$API/friends")"
 check "a wrong content type is 415, not 500" 415 "$(code -X POST -H 'Content-Type: text/plain' -H "$AUTHA" --data 'x' "$API/groups")"
 has "the 405 body still carries a message" "$(curl -s -X PUT -H "$AUTHA" "$API/friends")" '"message"'
+
+echo "== people: what people_api.dart calls (friend profile, your stats) =="
+# PeopleApi.getProfile. A and B are friends, B and C are friends, A and C are not - so
+# C's profile, seen by A, is a stranger's with B as the one mutual friend. The counts are
+# the other person's, not the slice of them A's own connection can see (V35).
+PROF=$(curl -s -H "$AUTHA" "$API/users/$IDB/profile")
+has "GET /users/{id}/profile for a friend" "$PROF" '"relationship":"FRIENDS"'
+has "carries the counts line" "$PROF" '"stats":{"friends":2'
+has "and what's in common" "$PROF" '"groupsInCommon":['
+PROFC=$(curl -s -H "$AUTHA" "$API/users/$IDC/profile")
+has "a stranger's profile says so" "$PROFC" '"relationship":"NONE"'
+has "and names the friend they share" "$PROFC" "\"mutualFriends\":[{\"userId\":\"$IDB\""
+check "an account that doesn't exist is 404" 404 "$(code -H "$AUTHA" "$API/users/00000000-0000-0000-0000-000000000000/profile")"
+# PeopleApi.getActivities, the Plans and Together tabs. PersonPlansScope.wire values.
+has "GET /users/{id}/activities?scope=upcoming" "$(curl -s -H "$AUTHA" "$API/users/$IDB/activities?scope=upcoming")" '['
+has "GET /users/{id}/activities?scope=together" "$(curl -s -H "$AUTHA" "$API/users/$IDB/activities?scope=together")" '['
+check "an unknown scope is a 400" 400 "$(code -H "$AUTHA" "$API/users/$IDB/activities?scope=everything")"
+# SocialApi.mute/unmute. B mutes C, whose plan is in B's feed from the backfill above; it
+# leaves and comes back, and C is never told.
+check "PUT /friends/{id}/mute" 204 "$(code -X PUT -H "$AUTHB" "$API/friends/$IDC/mute")"
+has "the profile says muted" "$(curl -s -H "$AUTHB" "$API/users/$IDC/profile")" '"muted":true'
+case "$(curl -s -H "$AUTHB" "$API/feed?limit=50")" in *"${LATE_ID:-missing-id}"*) bad "a muted friend's plan is still in the feed" ;; *) ok "a muted friend's plan leaves the feed" ;; esac
+has "and the mute is B's alone" "$(curl -s -H "$AUTHC" "$API/users/$IDB/profile")" '"muted":false'
+check "DELETE /friends/{id}/mute" 204 "$(code -X DELETE -H "$AUTHB" "$API/friends/$IDC/mute")"
+has "and the plan comes back" "$(curl -s -H "$AUTHB" "$API/feed?limit=50")" "${LATE_ID:-missing-id}"
+check "muting someone who isn't a friend is 404" 404 "$(code -X PUT -H "$AUTHA" "$API/friends/$IDC/mute")"
+# PeopleApi.getStats. PeopleRepository sends the device's UTC offset as tz, which Dio
+# encodes as %2B04:00; the server must read it as a zone, not fall back to UTC.
+STATS=$(curl -s -H "$AUTHA" "$API/me/stats?year=$(date +%Y)&tz=%2B04:00")
+has "GET /me/stats carries the year's months" "$STATS" '"byMonth":[{"hosted":'
+has "and the year the account began" "$STATS" "\"firstYear\":$(date +%Y)"
+check "a year out of range is a 400" 400 "$(code -H "$AUTHA" "$API/me/stats?year=1999&tz=%2B04:00")"
 
 echo "== unfriend (social screen) =="
 check "DELETE /friends/{userId}" 204 "$(code -X DELETE -H "$AUTHA" "$API/friends/$IDB")"

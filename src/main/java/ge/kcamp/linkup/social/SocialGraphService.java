@@ -19,6 +19,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -81,6 +82,7 @@ public class SocialGraphService {
                 if (friendship.getRequestedBy().equals(targetId)) {
                     // The target already requested us - this is a mutual request, auto-accept.
                     friendship.setStatus(FriendshipStatus.ACCEPTED);
+                    friendship.setAcceptedAt(Instant.now());
                     friendshipRepository.save(friendship);
                     eventPublisher.publishEvent(new FriendshipAcceptedEvent(a, b, Instant.now()));
                 }
@@ -93,6 +95,7 @@ public class SocialGraphService {
     public void acceptFriendRequest(UUID accepterId, UUID requesterId) {
         Friendship friendship = requirePendingRequest(accepterId, requesterId);
         friendship.setStatus(FriendshipStatus.ACCEPTED);
+        friendship.setAcceptedAt(Instant.now());
         friendshipRepository.save(friendship);
         eventPublisher.publishEvent(new FriendshipAcceptedEvent(
                 canonicalFirst(accepterId, requesterId), canonicalSecond(accepterId, requesterId), Instant.now()));
@@ -330,6 +333,70 @@ public class SocialGraphService {
                 }, () -> {
                     throw new FriendRequestNotFoundException();
                 });
+    }
+
+    /**
+     * Mutes or unmutes a friend's plans for the caller: they stay friends, and their plans
+     * stop reaching the caller's feed. Only the caller's own side of the pair's row is
+     * touched - the other person's mute, if any, is theirs. Not a friend (or blocked, or
+     * pending) answers the same "no such request" as {@link #unfriend}.
+     */
+    @Transactional
+    public void setMuted(UUID userId, UUID otherId, boolean muted) {
+        if (userId.equals(otherId)) {
+            throw new SelfFriendRequestException();
+        }
+        Friendship friendship = friendshipRepository
+                .findByIdUserAIdAndIdUserBId(canonicalFirst(userId, otherId), canonicalSecond(userId, otherId))
+                .filter(row -> row.getStatus() == FriendshipStatus.ACCEPTED)
+                .orElseThrow(FriendRequestNotFoundException::new);
+        if (friendship.getId().getUserAId().equals(userId)) {
+            friendship.setMutedByA(muted);
+        } else {
+            friendship.setMutedByB(muted);
+        }
+        friendshipRepository.save(friendship);
+    }
+
+    /** The friends this user has muted - whose plans the feed leaves out. */
+    @Transactional(readOnly = true)
+    public Set<UUID> getMutedIds(UUID userId) {
+        return Set.copyOf(friendshipRepository.findMutedIds(userId));
+    }
+
+    /**
+     * Where {@code userId} stands with {@code otherId}. Reads the pair's one row, which
+     * both of them may read under {@code friendships_select_policy}.
+     */
+    @Transactional(readOnly = true)
+    public Relationship relationship(UUID userId, UUID otherId) {
+        if (userId.equals(otherId)) {
+            return new Relationship(Relationship.Kind.SELF, null, false);
+        }
+        return friendshipRepository
+                .findByIdUserAIdAndIdUserBId(canonicalFirst(userId, otherId), canonicalSecond(userId, otherId))
+                .map(friendship -> switch (friendship.getStatus()) {
+                    case ACCEPTED -> new Relationship(
+                            Relationship.Kind.FRIENDS,
+                            friendship.getAcceptedAt(),
+                            friendship.getId().getUserAId().equals(userId)
+                                    ? friendship.isMutedByA()
+                                    : friendship.isMutedByB());
+                    case PENDING -> new Relationship(
+                            userId.equals(friendship.getRequestedBy())
+                                    ? Relationship.Kind.REQUEST_SENT
+                                    : Relationship.Kind.REQUEST_RECEIVED,
+                            null,
+                            false);
+                    case BLOCKED -> new Relationship(Relationship.Kind.BLOCKED, null, false);
+                })
+                .orElseGet(() -> new Relationship(Relationship.Kind.NONE, null, false));
+    }
+
+    /** How many friendships this user began in {@code [from, to)}, for their year in stats. */
+    @Transactional(readOnly = true)
+    public long countFriendsMadeBetween(UUID userId, Instant from, Instant to) {
+        return friendshipRepository.countAcceptedBetween(userId, from, to);
     }
 
     private static UUID otherParty(Friendship friendship, UUID userId) {

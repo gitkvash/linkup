@@ -5,6 +5,8 @@ import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
+import java.time.ZonedDateTime;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -41,6 +43,16 @@ public class UserDirectoryService {
 
     public Optional<UserSummary> findById(UUID userId) {
         return userRepository.findById(userId).map(UserDirectoryService::toSummary);
+    }
+
+    /**
+     * When the account was made. Kept off {@link UserSummary}, which every list in the app
+     * carries; the stats screen is the one place that asks, to know which years to offer.
+     */
+    public Optional<Instant> memberSince(UUID userId) {
+        return userRepository.findById(userId)
+                .map(ge.kcamp.linkup.identity.entity.User::getCreatedAt)
+                .map(ZonedDateTime::toInstant);
     }
 
     /**

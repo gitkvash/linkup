@@ -90,6 +90,23 @@ public class SocialController {
         return ResponseEntity.noContent().build();
     }
 
+    /**
+     * Mute a friend: still friends, but their plans stop reaching the caller's feed. PUT
+     * and DELETE rather than a toggle, so a retried request lands in the state the user
+     * chose instead of flipping back.
+     */
+    @PutMapping("/api/v1/friends/{userId}/mute")
+    public ResponseEntity<Void> mute(@PathVariable UUID userId) {
+        socialGraphService.setMuted(UserContext.getUserId(), userId, true);
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/api/v1/friends/{userId}/mute")
+    public ResponseEntity<Void> unmute(@PathVariable UUID userId) {
+        socialGraphService.setMuted(UserContext.getUserId(), userId, false);
+        return ResponseEntity.noContent().build();
+    }
+
     @PostMapping("/api/v1/groups")
     public ResponseEntity<Group> createGroup(@Valid @RequestBody CreateGroupRequest request) {
         Group group = groupService.createGroup(UserContext.getUserId(), request.groupName());
