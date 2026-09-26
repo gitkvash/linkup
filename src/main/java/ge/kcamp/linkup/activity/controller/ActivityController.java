@@ -6,17 +6,14 @@ import ge.kcamp.linkup.activity.ActivityParticipationService;
 import ge.kcamp.linkup.activity.ActivityLifecycleService;
 import ge.kcamp.linkup.activity.ActivityQueryService;
 import ge.kcamp.linkup.activity.command.ActivityCommandHandler;
-import ge.kcamp.linkup.activity.command.CreateActivityFromTextCommand;
 import ge.kcamp.linkup.activity.command.CreateStructuredActivityCommand;
 import ge.kcamp.linkup.activity.command.DeleteActivityCommand;
 import ge.kcamp.linkup.activity.command.UpdateActivityCommand;
-import ge.kcamp.linkup.activity.dto.CreateActivityFromTextRequest;
 import ge.kcamp.linkup.activity.dto.CreateStructuredActivityRequest;
 import ge.kcamp.linkup.activity.dto.InviteRequest;
 import ge.kcamp.linkup.activity.dto.ParticipationDto;
 import ge.kcamp.linkup.activity.dto.UpdateActivityRequest;
 import ge.kcamp.linkup.activity.entity.Activity;
-import ge.kcamp.linkup.activity.web.RequestZone;
 import ge.kcamp.linkup.UserContext;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -44,16 +41,6 @@ public class ActivityController {
         this.activityQueryService = activityQueryService;
         this.participationService = participationService;
         this.activityLifecycleService = activityLifecycleService;
-    }
-
-    @PostMapping("/from-text")
-    public ResponseEntity<Activity> createFromText(@Valid @RequestBody CreateActivityFromTextRequest request) {
-        UUID creatorId = UserContext.getUserId();
-        List<UUID> invitees = request.inviteeUserIds() == null ? List.of() : request.inviteeUserIds();
-        Activity activity = activityCommandHandler.handle(new CreateActivityFromTextCommand(
-                creatorId, request.rawText(), request.visibility(), request.groupId(), invitees,
-                RequestZone.resolve(request.timeZone())));
-        return ResponseEntity.status(HttpStatus.CREATED).body(activity);
     }
 
     @PostMapping

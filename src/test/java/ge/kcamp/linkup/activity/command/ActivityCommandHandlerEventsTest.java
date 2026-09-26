@@ -9,7 +9,6 @@ import ge.kcamp.linkup.activity.exception.ActivityNotVisibleException;
 import ge.kcamp.linkup.activity.repository.ActivityRepository;
 import ge.kcamp.linkup.activity.repository.LocationRepository;
 import ge.kcamp.linkup.activity.repository.ParticipantRepository;
-import ge.kcamp.linkup.nlp.NlpParserService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -51,7 +50,7 @@ class ActivityCommandHandlerEventsTest {
         participants = mock(ParticipantRepository.class);
         events = mock(ApplicationEventPublisher.class);
         handler = new ActivityCommandHandler(
-                activities, locations, mock(NlpParserService.class), persistence, participants, events);
+                activities, locations, persistence, participants, events);
 
         activity = new Activity();
         activity.setId(activityId);

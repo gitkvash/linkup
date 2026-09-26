@@ -34,15 +34,11 @@ public class SecurityConfig {
             @Value("${linkup.rate-limit.enabled:true}") boolean rateLimitEnabled,
             @Value("${linkup.rate-limit.auth-per-ip.requests:20}") int authRequests,
             @Value("${linkup.rate-limit.auth-per-ip.window-seconds:60}") long authWindowSeconds,
-            @Value("${linkup.rate-limit.from-text-per-user.requests:10}") int fromTextRequests,
-            @Value("${linkup.rate-limit.from-text-per-user.window-seconds:60}") long fromTextWindowSeconds,
             @Value("${linkup.rate-limit.max-keys:100000}") int maxKeys) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
         this.rateLimitFilter = new RateLimitFilter(
                 rateLimitEnabled,
                 new RateLimiter("auth-per-ip", authRequests, Duration.ofSeconds(authWindowSeconds), maxKeys),
-                new RateLimiter("from-text-per-user", fromTextRequests,
-                        Duration.ofSeconds(fromTextWindowSeconds), maxKeys),
                 jsonMapper);
     }
 
@@ -71,8 +67,7 @@ public class SecurityConfig {
                 .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED))
             )
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
-            // After the JWT filter, so the from-text limit can key on the authenticated user,
-            // and before authorization, so a throttled request costs nothing further.
+            // Before authorization, so a throttled request costs nothing further.
             .addFilterAfter(rateLimitFilter, JwtAuthenticationFilter.class);
 
         return http.build();

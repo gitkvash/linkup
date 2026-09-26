@@ -91,16 +91,15 @@ curl -s -o /dev/null -X PATCH "$API/activities/$PID" -H "$JSON" -H "$AUTHA" -d '
 # not an accident. The stranger is the one who must be shut out.
 check "a stranger cannot read a plan turned PRIVATE" 404 "$(code -H "$AUTHC" "$API/activities/$PID")"
 
-echo "== a text-created plan with no coordinates can be given some =="
-TEXT=$(curl -s -X POST "$API/activities/from-text" -H "$JSON" -H "$AUTHA" -d '{
-  "rawText":"coffee tomorrow at 5pm","visibility":"FRIENDS","timeZone":"Asia/Tbilisi"}')
+echo "== a plan with no coordinates can be given some =="
+TEXT=$(curl -s -X POST "$API/activities" -H "$JSON" -H "$AUTHA" -d '{
+  "title":"Coffee","startTime":"2031-06-01T09:00:00Z","visibility":"FRIENDS"}')
 TID=$(jsonf "$TEXT" id)
 curl -s -o /dev/null -X PATCH "$API/activities/$TID" -H "$JSON" -H "$AUTHA" -d '{
   "title":"Coffee","startTime":"2031-06-01T09:00:00Z","lat":41.7,"lng":44.79,
   "addressText":"Fabrika","visibility":"FRIENDS"}'
 TDETAIL=$(curl -s -H "$AUTHA" "$API/activities/$TID")
 has "it now has coordinates" "$TDETAIL" '"lat":41.7'
-has "and counts as a specific event" "$TDETAIL" 'SPECIFIC_EVENT'
 
 echo "== cancelling =="
 check "a stranger cannot delete it" 404 "$(code -X DELETE -H "$AUTHC" "$API/activities/$PID")"

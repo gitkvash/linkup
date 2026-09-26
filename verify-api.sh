@@ -122,26 +122,6 @@ else
   ok "feed ended after one page (no cursor)"
 fi
 
-echo "== B7: free text is read in the caller's time zone =="
-TZC=$(curl -s -X POST "$API/activities/from-text" -H "$JSON" -H "$AUTHA" \
-  -d '{"rawText":"Coffee at Vake park tomorrow at 7pm","visibility":"FRIENDS","timeZone":"Asia/Tbilisi"}')
-case "$TZC" in *T19:00:00+04:00*) ok "7pm Tbilisi stays 19:00+04:00" ;; *) bad "wrong instant ($TZC)" ;; esac
-case "$TZC" in *'"title":"Coffee"'*) ok "title excludes the time and place" ;; *) bad "title not cleaned ($TZC)" ;; esac
-
-MINE=$(curl -s -H "$AUTHA" "$API/activities/mine")
-case "$MINE" in *'"addressText":"Vake park"'*) ok "text-created plan kept its address" ;; *) bad "address dropped" ;; esac
-
-echo "== B8: Georgian free text finds a time and a place =="
-# Written to a file: passing UTF-8 through a Windows command line turns Georgian
-# into "?" before curl ever sees it, which looks exactly like a parser failure.
-GE_BODY=$(mktemp)
-printf '%s' '{"rawText":"ყავა ვაკის პარკში ხვალ 19 საათზე","visibility":"FRIENDS","timeZone":"Asia/Tbilisi"}' > "$GE_BODY"
-GEC=$(curl -s -X POST "$API/activities/from-text" -H 'Content-Type: application/json; charset=utf-8' \
-  -H "$AUTHA" --data-binary "@$GE_BODY")
-rm -f "$GE_BODY"
-case "$GEC" in *T19:00:00+04:00*) ok "Georgian '19 საათზე' resolves to 19:00+04:00" ;; *) bad "no Georgian time found ($GEC)" ;; esac
-case "$GEC" in *'"title":"ყავა"'*) ok "Georgian title has the place and time stripped" ;; *) bad "Georgian title not cleaned ($GEC)" ;; esac
-
 echo
 echo "==== $pass passed, $fail failed ===="
 [ "$fail" -eq 0 ]

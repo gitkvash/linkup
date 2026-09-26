@@ -24,10 +24,4 @@ class ModuleBoundaryArchTests {
     static final ArchRule social_should_not_depend_on_feed_or_notification = noClasses()
             .that().resideInAPackage("..social..")
             .should().dependOnClassesThat().resideInAnyPackage("..feed..", "..notification..");
-
-    @ArchTest
-    static final ArchRule nlp_should_not_depend_on_other_modules = noClasses()
-            .that().resideInAPackage("..nlp..")
-            .should().dependOnClassesThat().resideInAnyPackage(
-                    "..activity..", "..social..", "..feed..", "..notification..", "..identity..");
 }

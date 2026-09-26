@@ -1,6 +1,5 @@
 package ge.kcamp.linkup;
 
-import ge.kcamp.linkup.nlp.NlpUnavailableException;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -160,15 +159,6 @@ public class GlobalExceptionHandler {
                 HttpStatus.CONFLICT,
                 "That conflicts with something that already exists, or refers to something that doesn't.",
                 ApiError.CONFLICT);
-    }
-
-    /**
-     * Text parsing capacity is exhausted. 503 + Retry-After, so this reads as "try
-     * again" rather than "the server is broken".
-     */
-    @ExceptionHandler(NlpUnavailableException.class)
-    public ResponseEntity<Map<String, Object>> handleNlpUnavailable(NlpUnavailableException ex) {
-        return ApiError.of(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage(), "NLP_BUSY");
     }
 
     @ExceptionHandler(AccessDeniedException.class)

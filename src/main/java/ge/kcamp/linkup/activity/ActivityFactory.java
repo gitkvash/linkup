@@ -15,9 +15,7 @@ public class ActivityFactory {
      * @param groupId  the audience for {@code GROUP} visibility, null for every other
      *                 value. Membership is the caller's business to check - see
      *                 {@code ActivityCommandHandler.resolveGroupId}.
-     * @param category null defaults to {@link ActivityCategory#GENERAL} - the free-text
-     *                 creation path has no way to infer a category, so it always passes
-     *                 null here.
+     * @param category null defaults to {@link ActivityCategory#GENERAL}.
      */
     public Activity createFrom(
             ActivitySpec spec, UUID creatorId, ActivityVisibility visibility, UUID groupId,

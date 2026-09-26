@@ -1,7 +1,5 @@
 package ge.kcamp.linkup.identity.security;
 
-import ge.kcamp.linkup.UserContext;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -10,7 +8,6 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
-import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -18,17 +15,11 @@ class RateLimitFilterTest {
 
     private final JsonMapper jsonMapper = JsonMapper.builder().build();
 
-    private RateLimitFilter filter(boolean enabled, int authRequests, int fromTextRequests) {
+    private RateLimitFilter filter(boolean enabled, int authRequests) {
         return new RateLimitFilter(
                 enabled,
                 new RateLimiter("auth", authRequests, Duration.ofMinutes(1), 1000),
-                new RateLimiter("from-text", fromTextRequests, Duration.ofMinutes(1), 1000),
                 jsonMapper);
-    }
-
-    @AfterEach
-    void clearUser() {
-        UserContext.clear();
     }
 
     private static MockHttpServletRequest post(String path, String ip) {
@@ -46,7 +37,7 @@ class RateLimitFilterTest {
 
     @Test
     void authEndpointsShareOnePerIpBudgetAndAnswer429InTheApiErrorShape() throws Exception {
-        RateLimitFilter filter = filter(true, 2, 10);
+        RateLimitFilter filter = filter(true, 2);
 
         assertThat(send(filter, post("/api/v1/auth/login", "10.0.0.1")).getStatus()).isEqualTo(200);
         assertThat(send(filter, post("/api/v1/auth/refresh", "10.0.0.1")).getStatus()).isEqualTo(200);
@@ -67,7 +58,7 @@ class RateLimitFilterTest {
 
     @Test
     void otherEndpointsAndMethodsAreNotCounted() throws Exception {
-        RateLimitFilter filter = filter(true, 1, 1);
+        RateLimitFilter filter = filter(true, 1);
 
         for (int i = 0; i < 5; i++) {
             assertThat(send(filter, post("/api/v1/activities", "10.0.0.1")).getStatus()).isEqualTo(200);
@@ -78,31 +69,8 @@ class RateLimitFilterTest {
     }
 
     @Test
-    void fromTextIsLimitedPerAuthenticatedUser() throws Exception {
-        RateLimitFilter filter = filter(true, 100, 1);
-        UUID alice = UUID.randomUUID();
-
-        UserContext.setUserId(alice);
-        assertThat(send(filter, post("/api/v1/activities/from-text", "10.0.0.1")).getStatus()).isEqualTo(200);
-        assertThat(send(filter, post("/api/v1/activities/from-text", "10.0.0.9")).getStatus()).isEqualTo(429);
-
-        UserContext.setUserId(UUID.randomUUID());
-        assertThat(send(filter, post("/api/v1/activities/from-text", "10.0.0.1")).getStatus()).isEqualTo(200);
-    }
-
-    /** No user to key on; the authorization filter refuses it later anyway. */
-    @Test
-    void unauthenticatedFromTextPassesThroughToBeRefusedByAuthorization() throws Exception {
-        RateLimitFilter filter = filter(true, 100, 1);
-
-        for (int i = 0; i < 3; i++) {
-            assertThat(send(filter, post("/api/v1/activities/from-text", "10.0.0.1")).getStatus()).isEqualTo(200);
-        }
-    }
-
-    @Test
     void disabledFilterLimitsNothing() throws Exception {
-        RateLimitFilter filter = filter(false, 1, 1);
+        RateLimitFilter filter = filter(false, 1);
 
         for (int i = 0; i < 3; i++) {
             assertThat(send(filter, post("/api/v1/auth/login", "10.0.0.1")).getStatus()).isEqualTo(200);

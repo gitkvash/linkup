@@ -146,11 +146,6 @@ check "a rule ending before it starts is a 400" 400 "$(code -X POST "$API/activi
   "addressText":"x","visibility":"FRIENDS","repeatFrequency":"WEEKLY","repeatUntil":"2031-03-01T15:00:00.000Z"}')"
 check "cleaning up the repeating plan" 204 "$(code -X DELETE -H "$AUTHA" "$API/activities/$RID")"
 
-FROMTEXT=$(curl -s -X POST "$API/activities/from-text" -H "$JSON" -H "$AUTHA" -d '{
-  "rawText":"coffee tomorrow at 5pm at Fabrika","visibility":"FRIENDS","groupId":null,
-  "inviteeUserIds":[],"timeZone":"Asia/Tbilisi"}')
-has "POST /activities/from-text accepts timeZone" "$FROMTEXT" '"id"'
-
 DETAIL=$(curl -s -H "$AUTHA" "$API/activities/$AID")
 has "GET /activities/{id} carries activityId" "$DETAIL" '"activityId"'
 # Without this the detail screen's "Organiser" row can only render the raw id.
@@ -262,11 +257,6 @@ printf '{"title":"%s","startTime":"2031-01-01T10:00:00Z","visibility":"PUBLIC"}'
 LONGRES=$(curl -s -X POST "$API/activities" -H "$JSON" -H "$AUTHA" --data-binary @/tmp/cc_long.json)
 has "an over-long title is a 400 naming the field" "$LONGRES" '"title"'
 has "and is not reported as a conflict" "$LONGRES" '"status":400'
-# Free text is the user's own sentence (the client allows 280 chars), so the title
-# derived from it is truncated rather than refused.
-LONG_TEXT=$(printf 'lets go for a walk somewhere quite far away and back again %.0s' 1 2 3 4 | cut -c1-270)
-printf '{"rawText":"%s","visibility":"PUBLIC","timeZone":"Asia/Tbilisi"}' "$LONG_TEXT" > /tmp/cc_long2.json
-check "a 270-char free-text plan is accepted" 201 "$(code -X POST "$API/activities/from-text" -H "$JSON" -H "$AUTHA" --data-binary @/tmp/cc_long2.json)"
 
 echo "== places: what place_api.dart calls =="
 # A plan links to a place by distance, on the server (V31) - the client sends only the

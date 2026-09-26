@@ -124,15 +124,6 @@
 			<artifactId>hibernate-spatial</artifactId>
 		</dependency>
 
-		<!-- Natural-language time parsing for frictionless activity creation. NOTE: GPLv3
-		     (transitively pulls Stanford CoreNLP, also GPL) - confirm license compatibility
-		     before shipping commercially. -->
-		<dependency>
-			<groupId>com.zoho</groupId>
-			<artifactId>hawking</artifactId>
-			<version>0.1.9</version>
-		</dependency>
-
 		<dependency>
 			<groupId>com.google.firebase</groupId>
 			<artifactId>firebase-admin</artifactId>

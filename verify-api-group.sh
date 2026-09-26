@@ -100,12 +100,6 @@ SEEN=$(curl -s -H "$AUTHC" "$API/activities/$SID")
 case "$SEEN" in *'"title":"Public anyway"'*) ok "still public to everyone" ;; *) bad "not public ($SEEN)" ;; esac
 case "$SEEN" in *'"groupId":null'*|*'"groupName":null'*) ok "the group id was dropped" ;; *) bad "group id was kept ($SEEN)" ;; esac
 
-echo "== text-created plans take a group too =="
-TXT=$(curl -s -X POST "$API/activities/from-text" -H "$JSON" -H "$AUTHA" -d "{
-  \"rawText\":\"Coffee tomorrow at 5pm\",\"visibility\":\"GROUP\",\"groupId\":\"$GID\",
-  \"timeZone\":\"Asia/Tbilisi\"}")
-case "$TXT" in *"\"groupId\":\"$GID\""*) ok "from-text carries the group" ;; *) bad "from-text ($TXT)" ;; esac
-
 echo
 echo "==== $pass passed, $fail failed ===="
 [ "$fail" -eq 0 ]

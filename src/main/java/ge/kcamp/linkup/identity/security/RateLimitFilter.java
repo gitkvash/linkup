@@ -1,7 +1,6 @@
 package ge.kcamp.linkup.identity.security;
 
 import ge.kcamp.linkup.ApiError;
-import ge.kcamp.linkup.UserContext;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -18,12 +17,10 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.UUID;
 
 /**
- * Per-client limits on the endpoints that are expensive or worth guessing at: the
- * {@code /auth} endpoints by client IP (password guessing, account creation, token
- * probing) and free-text activity creation by user (every call runs the NLP parser).
+ * Per-client limits on the endpoints worth guessing at: the {@code /auth} endpoints, by
+ * client IP (password guessing, account creation, token probing).
  * <p>
  * The client IP is {@link HttpServletRequest#getRemoteAddr()}, which is only the real
  * client because {@code server.forward-headers-strategy: native} lets Tomcat take it from
@@ -35,9 +32,9 @@ import java.util.UUID;
  * {@link LoginAttemptLimiter}, called from the login itself.
  * <p>
  * Deliberately not a {@code @Component}. Spring Boot registers every {@code Filter} bean
- * with the servlet container as well, so it would also run outside the security chain -
- * before the JWT filter, where the from-text limit has no user to key on.
- * {@link SecurityConfig} builds it and places it after {@link JwtAuthenticationFilter}.
+ * with the servlet container as well, so it would also run outside the security chain,
+ * and a limited request would be counted twice. {@link SecurityConfig} builds it and
+ * places it after {@link JwtAuthenticationFilter}.
  */
 public class RateLimitFilter extends OncePerRequestFilter {
 
@@ -49,18 +46,15 @@ public class RateLimitFilter extends OncePerRequestFilter {
             post("/api/v1/auth/google"),
             post("/api/v1/auth/refresh"),
             post("/api/v1/auth/logout"));
-    private final RequestMatcher fromText = post("/api/v1/activities/from-text");
 
     private final boolean enabled;
     private final RateLimiter authPerIp;
-    private final RateLimiter fromTextPerUser;
     private final JsonMapper jsonMapper;
 
     public RateLimitFilter(
-            boolean enabled, RateLimiter authPerIp, RateLimiter fromTextPerUser, JsonMapper jsonMapper) {
+            boolean enabled, RateLimiter authPerIp, JsonMapper jsonMapper) {
         this.enabled = enabled;
         this.authPerIp = authPerIp;
-        this.fromTextPerUser = fromTextPerUser;
         this.jsonMapper = jsonMapper;
     }
 
@@ -75,13 +69,6 @@ public class RateLimitFilter extends OncePerRequestFilter {
         RateLimiter.Decision decision = RateLimiter.Decision.ALLOWED;
         if (authEndpoints.matches(request)) {
             decision = authPerIp.tryAcquire(request.getRemoteAddr());
-        } else if (fromText.matches(request)) {
-            UUID userId = UserContext.getUserId();
-            // Unauthenticated: nothing to key on, and the authorization filter further
-            // down refuses it with a 401 before the parser ever runs.
-            if (userId != null) {
-                decision = fromTextPerUser.tryAcquire(userId.toString());
-            }
         }
 
         if (!decision.allowed()) {

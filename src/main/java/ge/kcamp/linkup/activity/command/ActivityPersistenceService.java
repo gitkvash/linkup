@@ -31,12 +31,9 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * The transactional write path for a plan, shared by both {@link ActivityCommandHandler}
- * entry points. Split out from the handler so the DB transaction only ever spans this - in
- * particular, never the multi-second CoreNLP parse that {@code CreateActivityFromTextCommand}
- * runs before reaching here (see the handler's Javadoc). A Spring proxy only applies
- * {@code @Transactional} across a bean boundary, which is the other reason this had to be a
- * separate bean rather than a private method the handler calls into.
+ * The transactional write path for a new plan, called from {@link ActivityCommandHandler}.
+ * A separate bean rather than a private method on the handler because a Spring proxy only
+ * applies {@code @Transactional} across a bean boundary.
  */
 @Service
 public class ActivityPersistenceService {

@@ -44,8 +44,7 @@ spring:
       # Flyway owns the schema; Hibernate only validates the mapping matches it.
       ddl-auto: validate
     show-sql: false
-    # A JDBC connection held for the whole request - including the multi-second
-    # CoreNLP parse on activity creation - starves the pool under any load.
+    # A JDBC connection held for the whole request starves the pool under any load.
     open-in-view: false
     properties:
       hibernate:
@@ -134,7 +133,7 @@ linkup:
     credentials-path: ${LINKUP_FCM_CREDENTIALS_PATH:}
   rate-limit:
     # In-memory, per instance (one Render instance today). Buckets are keyed by client IP
-    # on /auth, by username on login, and by user on the free-text parser.
+    # on /auth and by username on login.
     enabled: ${LINKUP_RATE_LIMIT_ENABLED:true}
     auth-per-ip:
       requests: 20
@@ -142,9 +141,6 @@ linkup:
     login-per-username:
       requests: 10
       window-seconds: 900
-    from-text-per-user:
-      requests: 10
-      window-seconds: 60
     max-keys: 100000
   notification:
     # Push text is rendered on the server, so a plan's time has to be formatted in some
