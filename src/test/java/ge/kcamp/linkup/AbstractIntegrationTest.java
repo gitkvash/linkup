@@ -82,6 +82,15 @@ public abstract class AbstractIntegrationTest {
         registry.add("spring.datasource.password", POSTGRES::getPassword);
     }
 
+    /**
+     * The OSM place sync would otherwise call Overpass a minute into every test JVM, and
+     * rewrite the places the map tests assert on. {@code PlaceSyncJobIT} drives it by hand.
+     */
+    @DynamicPropertySource
+    static void placeSyncProperties(DynamicPropertyRegistry registry) {
+        registry.add("linkup.places.sync.enabled", () -> "false");
+    }
+
     @Autowired
     private JdbcTemplate integrationJdbc;
 

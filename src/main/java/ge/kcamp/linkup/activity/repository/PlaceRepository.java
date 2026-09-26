@@ -21,8 +21,9 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * Read side for the well-known places (V31): the ones in a viewport, each with how many
- * plans are on there this week, and the plans behind that number.
+ * Read side for the well-known places (V31, kept in step with OSM since V32): the ones in a
+ * viewport, each with how many plans are on there this week, and the plans behind that
+ * number. A hidden place is neither drawn nor listed.
  * <p>
  * Both queries count and list through the same predicate - linked to the place, visible to
  * the caller, not over, starting within {@link #WINDOW} - so the number on the map is always
@@ -39,7 +40,11 @@ public class PlaceRepository {
      */
     private static final String WINDOW = "a.start_time < now() + interval '7 days'";
 
-    /** Ceiling on places per viewport. The seed is a few dozen; this bounds a grown table. */
+    /**
+     * Ceiling on places per viewport. The OSM sync puts about 150 in Tbilisi alone, so a
+     * city-wide viewport can reach it. The query keeps the largest, which are the ones
+     * worth drawing at that scale.
+     */
     private static final int MAX_PLACES = 200;
 
     /** Ceiling on the plans a place lists, the same as a cluster's. */
@@ -52,17 +57,25 @@ public class PlaceRepository {
               AND %s
             """.formatted(WINDOW, ActivityStatusSql.NOT_ENDED, ActivityVisibilitySql.VISIBLE_TO_VIEWER);
 
+    /**
+     * A place smaller than {@code :minRadius} is left out unless it has plans this week,
+     * since a place with plans is worth drawing at any zoom. See {@link #minRadiusForZoom}.
+     */
     private static final String IN_BOUNDS_QUERY = """
-            SELECT p.place_id, p.name, p.name_ka, p.kind,
-                   ST_Y(p.geom_point) AS lat,
-                   ST_X(p.geom_point) AS lng,
-                   (SELECT count(*)
-                    FROM locations l
-                    JOIN activities a ON a.activity_id = l.activity_id
-                    WHERE %s) AS plans_this_week
-            FROM places p
-            WHERE p.geom_point && ST_MakeEnvelope(:minLng, :minLat, :maxLng, :maxLat, 4326)
-            ORDER BY p.name
+            SELECT * FROM (
+                SELECT p.place_id, p.name, p.name_ka, p.kind, p.radius_m,
+                       ST_Y(p.geom_point) AS lat,
+                       ST_X(p.geom_point) AS lng,
+                       (SELECT count(*)
+                        FROM locations l
+                        JOIN activities a ON a.activity_id = l.activity_id
+                        WHERE %s) AS plans_this_week
+                FROM places p
+                WHERE p.geom_point && ST_MakeEnvelope(:minLng, :minLat, :maxLng, :maxLat, 4326)
+                  AND NOT p.hidden
+            ) in_view
+            WHERE radius_m >= :minRadius OR plans_this_week > 0
+            ORDER BY plans_this_week > 0 DESC, radius_m DESC, name
             LIMIT %d
             """.formatted(PLAN_PREDICATE, MAX_PLACES);
 
@@ -77,6 +90,7 @@ public class PlaceRepository {
             JOIN locations l ON l.place_id = p.place_id
             JOIN activities a ON a.activity_id = l.activity_id
             WHERE p.place_id = :placeId
+              AND NOT p.hidden
               AND l.geom_point IS NOT NULL
               AND %s
             ORDER BY a.start_time, a.activity_id
@@ -89,8 +103,12 @@ public class PlaceRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    public List<MapPlaceDto> findInBounds(BoundingBox bbox, UUID viewerId) {
+    /**
+     * @param zoom the map's zoom, or null for every place in the box whatever its size
+     */
+    public List<MapPlaceDto> findInBounds(BoundingBox bbox, UUID viewerId, Integer zoom) {
         Map<String, Object> params = new HashMap<>();
+        params.put("minRadius", minRadiusForZoom(zoom));
         params.put("minLat", bbox.minLat());
         params.put("minLng", bbox.minLng());
         params.put("maxLat", bbox.maxLat());
@@ -112,6 +130,23 @@ public class PlaceRepository {
                 Objects.requireNonNull(viewerId, "viewerId is required to read places"));
 
         return jdbcTemplate.query(PLANS_QUERY, params, PlaceRepository::mapPlan);
+    }
+
+    /**
+     * The smallest place worth drawing at a zoom, by radius. The app draws places from zoom
+     * 11, where a 24dp tile covers about 2 km. At that scale only lakes and the big parks
+     * can be told apart; a mall or an arena would be one tile in a pile. Each step in
+     * shrinks the bar, and from 14 everything is drawn, by which point every place is
+     * labelled too.
+     */
+    static int minRadiusForZoom(Integer zoom) {
+        if (zoom == null || zoom >= 14) {
+            return 0;
+        }
+        if (zoom <= 11) {
+            return 300;
+        }
+        return zoom == 12 ? 150 : 80;
     }
 
     private static MapPlaceDto mapPlace(ResultSet rs, int rowNum) throws SQLException {

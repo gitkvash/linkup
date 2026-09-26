@@ -1,6 +1,7 @@
 package ge.kcamp.linkup.activity.repository;
 
 import ge.kcamp.linkup.AbstractIntegrationTest;
+import ge.kcamp.linkup.DatabaseRole;
 import ge.kcamp.linkup.activity.dto.BoundingBox;
 import ge.kcamp.linkup.activity.dto.MapClusterMemberDto;
 import ge.kcamp.linkup.activity.dto.MapPlaceDto;
@@ -57,7 +58,7 @@ class PlaceRepositoryIT extends AbstractIntegrationTest {
     void theSeedIsOnTheMapWithItsKindAndGeorgianName() {
         UUID viewer = actAs(newUser());
 
-        List<MapPlaceDto> places = placeRepository.findInBounds(WEST_TBILISI, viewer);
+        List<MapPlaceDto> places = placeRepository.findInBounds(WEST_TBILISI, viewer, null);
 
         MapPlaceDto lisi = byName(places, "Lisi Lake");
         assertThat(lisi.kind()).isEqualTo(PlaceKind.LAKE);
@@ -77,7 +78,7 @@ class PlaceRepositoryIT extends AbstractIntegrationTest {
                 ActivityVisibility.PUBLIC, ZonedDateTime.now().plusDays(2));
 
         assertThat(placeNameOf(activityId)).isEqualTo("Lisi Lake");
-        assertThat(byName(placeRepository.findInBounds(WEST_TBILISI, creator), "Lisi Lake").plansThisWeek())
+        assertThat(byName(placeRepository.findInBounds(WEST_TBILISI, creator, null), "Lisi Lake").plansThisWeek())
                 .isEqualTo(1);
         assertThat(placeRepository.findPlansThisWeek(lisiId(), creator))
                 .extracting(MapClusterMemberDto::title)
@@ -135,16 +136,58 @@ class PlaceRepositoryIT extends AbstractIntegrationTest {
                 ActivityVisibility.PUBLIC, ZonedDateTime.now().plusDays(30));
 
         // The creator sees their private plan too; next month is outside the window.
-        assertThat(byName(placeRepository.findInBounds(WEST_TBILISI, creator), "Lisi Lake").plansThisWeek())
+        assertThat(byName(placeRepository.findInBounds(WEST_TBILISI, creator, null), "Lisi Lake").plansThisWeek())
                 .isEqualTo(2);
 
         // A stranger sees the one public plan this week; the private one isn't hinted at.
         UUID stranger = actAs(newUser());
-        assertThat(byName(placeRepository.findInBounds(WEST_TBILISI, stranger), "Lisi Lake").plansThisWeek())
+        assertThat(byName(placeRepository.findInBounds(WEST_TBILISI, stranger, null), "Lisi Lake").plansThisWeek())
                 .isEqualTo(1);
         assertThat(placeRepository.findPlansThisWeek(lisiId(), stranger))
                 .extracting(MapClusterMemberDto::title)
                 .containsExactly("Public, Saturday");
+    }
+
+    @Test
+    void aZoomedOutViewKeepsTheLargePlacesAndAnyWithPlans() {
+        UUID creator = actAs(newUser());
+
+        assertThat(placeRepository.findInBounds(WEST_TBILISI, creator, 11)).extracting(MapPlaceDto::name)
+                .contains("Lisi Lake", "Vake Park")
+                .doesNotContain("Arena 2", "City Mall Saburtalo");
+
+        // ~19m from Arena 2's centre: a plan makes it worth drawing at any zoom.
+        createActivityAt(creator, "Futsal", 41.718017, 44.741049,
+                ActivityVisibility.PUBLIC, ZonedDateTime.now().plusDays(1));
+
+        assertThat(placeRepository.findInBounds(WEST_TBILISI, creator, 11)).extracting(MapPlaceDto::name)
+                .contains("Arena 2")
+                .doesNotContain("City Mall Saburtalo");
+        assertThat(placeRepository.findInBounds(WEST_TBILISI, creator, 14)).extracting(MapPlaceDto::name)
+                .contains("Arena 2", "City Mall Saburtalo");
+    }
+
+    @Test
+    void aHiddenPlaceIsNeitherDrawnNorLinked() {
+        UUID creator = actAs(newUser());
+        setLisiHidden(true);
+        try {
+            UUID activityId = createActivityAt(creator, "Swim", LISI_LAT, LISI_LNG,
+                    ActivityVisibility.PUBLIC, ZonedDateTime.now().plusDays(1));
+
+            assertThat(placeNameOf(activityId)).isNull();
+            assertThat(placeRepository.findInBounds(WEST_TBILISI, creator, null))
+                    .extracting(MapPlaceDto::name)
+                    .doesNotContain("Lisi Lake");
+        } finally {
+            setLisiHidden(false);
+        }
+    }
+
+    /** As the owner: the request role can only read places. */
+    private void setLisiHidden(boolean hidden) {
+        DatabaseRole.runAsSystem(() ->
+                jdbcTemplate.update("UPDATE places SET hidden = ? WHERE name = 'Lisi Lake'", hidden));
     }
 
     private UUID lisiId() {

@@ -146,3 +146,20 @@ linkup:
     # Push text is rendered on the server, so a plan's time has to be formatted in some
     # zone. The JVM's (UTC on Render) put Tbilisi users four hours off.
     zone: ${LINKUP_NOTIFICATION_ZONE:Asia/Tbilisi}
+  places:
+    sync:
+      # Keeps the map's well-known places in step with OpenStreetMap, through the public
+      # Overpass API (free, no key). See PlaceSyncJob. The defaults are safe for every
+      # environment. Set LINKUP_PLACES_SYNC_ENABLED=false for a database whose places
+      # shouldn't change.
+      enabled: ${LINKUP_PLACES_SYNC_ENABLED:true}
+      # Comma-separated, tried in order: the main public instance is often busy.
+      overpass-url: ${LINKUP_PLACES_SYNC_OVERPASS_URL:https://overpass-api.de/api/interpreter,https://overpass.private.coffee/api/interpreter}
+      # south,west,north,east rectangles, separated by ';'. Greater Tbilisi (Mtskheta and
+      # the Tbilisi Sea included), Batumi, Kutaisi.
+      areas: ${LINKUP_PLACES_SYNC_AREAS:41.60,44.60,41.87,45.05;41.56,41.55,41.70,41.72;42.20,42.60,42.32,42.80}
+      # How old the last successful sync may get, and how often that is checked. A failed
+      # sync is retried at the next check, not a week later.
+      interval: ${LINKUP_PLACES_SYNC_INTERVAL:P7D}
+      check-every: ${LINKUP_PLACES_SYNC_CHECK_EVERY:PT1H}
+      initial-delay: PT1M

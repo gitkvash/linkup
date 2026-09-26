@@ -32,18 +32,24 @@ public class PlaceController {
         this.placeRepository = placeRepository;
     }
 
-    /** Unclustered: a few dozen named places, each wanting its label, not a count. */
+    /**
+     * Unclustered: named places, each wanting its label, not a count. {@code zoom} is
+     * optional and thins a zoomed-out view to the larger places
+     * ({@link PlaceRepository#minRadiusForZoom}). Without it, every place in the box is
+     * returned, which is what builds that predate the parameter get.
+     */
     @GetMapping
     public List<MapPlaceDto> getInBounds(
             @RequestParam double minLat,
             @RequestParam double minLng,
             @RequestParam double maxLat,
-            @RequestParam double maxLng) {
+            @RequestParam double maxLng,
+            @RequestParam(required = false) Integer zoom) {
 
         BoundingBox bbox = new BoundingBox(minLat, minLng, maxLat, maxLng);
         bbox.validate();
 
-        return placeRepository.findInBounds(bbox, UserContext.getUserId());
+        return placeRepository.findInBounds(bbox, UserContext.getUserId(), zoom);
     }
 
     @GetMapping("/{placeId}/activities")
