@@ -161,6 +161,29 @@ class ActivityMapRepositoryIT extends AbstractIntegrationTest {
         assertThat(results).isEmpty();
     }
 
+    /**
+     * The viewport is prefiltered by a SECURITY DEFINER function (V36), which reads past
+     * every policy - so it has to apply visibility itself, for the stamped caller.
+     */
+    @Test
+    void theMapDoesNotShowSomeoneElsesPrivatePlan() {
+        UUID creatorId = actAs(newUser());
+        createActivityAt(creatorId, "Secret sauna", 41.7151, 44.8271,
+                ActivityCategory.GENERAL, ActivityVisibility.PRIVATE);
+        createActivityAt(creatorId, "Open picnic", 41.7152, 44.8272,
+                ActivityCategory.GENERAL, ActivityVisibility.PUBLIC);
+
+        BoundingBox bbox = new BoundingBox(41.0, 44.0, 42.0, 45.0);
+        assertThat(activityMapRepository.findClusteredMarkers(bbox, 1.0, 2, creatorId))
+                .extracting(MapMarkerDto::title)
+                .containsExactlyInAnyOrder("Secret sauna", "Open picnic");
+
+        UUID strangerId = actAs(newUser());
+        assertThat(activityMapRepository.findClusteredMarkers(bbox, 1.0, 2, strangerId))
+                .extracting(MapMarkerDto::title)
+                .containsExactly("Open picnic");
+    }
+
     private void createActivityAt(UUID creatorId, String title, double lat, double lng) {
         createActivityAt(creatorId, title, lat, lng, ActivityCategory.GENERAL);
     }

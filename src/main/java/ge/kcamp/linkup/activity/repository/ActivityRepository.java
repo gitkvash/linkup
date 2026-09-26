@@ -24,15 +24,22 @@ public interface ActivityRepository extends JpaRepository<Activity, UUID> {
      * one; and a one-off only if the host hasn't started or ended it. A repeating plan
      * the host started some earlier week is still a candidate for this week - the caller
      * resolves its status and skips anything not upcoming.
+     * <p>
+     * Each branch carries its own start-time bound, so each has an index to use: a
+     * one-off's start is in the window ({@code idx_activities_start_time}), and a
+     * repeating plan's stored start - its first occurrence - is merely not after it
+     * ({@code idx_activities_repeating_start}, V36). With a single shared
+     * {@code startTime <= :to} outside the OR, this ran twice a minute over every plan
+     * that had ever started.
      */
     @Query("""
             SELECT a FROM Activity a
             WHERE a.hasTime = true
               AND a.cancelledAt IS NULL
-              AND a.startTime <= :to
-              AND ((a.repeatFrequency IS NULL AND a.startTime > :from
+              AND ((a.repeatFrequency IS NULL AND a.startTime > :from AND a.startTime <= :to
                         AND a.startedAt IS NULL AND a.endedAt IS NULL)
-                   OR (a.repeatFrequency IS NOT NULL AND (a.repeatUntil IS NULL OR a.repeatUntil > :from)))
+                   OR (a.repeatFrequency IS NOT NULL AND a.startTime <= :to
+                        AND (a.repeatUntil IS NULL OR a.repeatUntil > :from)))
             """)
     List<Activity> findReminderCandidates(@Param("from") ZonedDateTime from, @Param("to") ZonedDateTime to);
 }

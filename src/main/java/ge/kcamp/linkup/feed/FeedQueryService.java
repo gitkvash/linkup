@@ -60,8 +60,11 @@ public class FeedQueryService {
         int pageSize = Math.clamp(limit, 1, MAX_LIMIT);
         Double cursorScore = cursor == null ? null : cursor.doubleValue();
 
+        // One read for both the pulled half's friend list and the mute filter below.
+        SocialGraphService.AcceptedFriends friends = socialGraphService.getAcceptedFriends(userId);
+
         TimelineScan timeline = scanTimeline(userId, cursorScore, pageSize);
-        List<ActivityFeedItem> pulled = pulledItems(userId, cursorScore, pageSize);
+        List<ActivityFeedItem> pulled = pulledItems(userId, friends.ids(), cursorScore, pageSize);
 
         // Timeline first so a duplicate keeps the timeline copy; both are the same row.
         LinkedHashMap<UUID, ActivityFeedItem> deduped = new LinkedHashMap<>();
@@ -76,7 +79,7 @@ public class FeedQueryService {
         // timeline: unmuting then brings them straight back, with no backfill to wait for.
         // A plan the viewer is in (invited or joined) still shows - muting someone is
         // about their plans, not about the ones they asked you to.
-        Set<UUID> muted = socialGraphService.getMutedIds(userId);
+        Set<UUID> muted = friends.muted();
         List<ActivityFeedItem> ordered = new ArrayList<>(deduped.values().stream()
                 .filter(item -> scoreOf(item) >= timeline.floor())
                 .filter(item -> item.viewerStatus() != null || !muted.contains(item.creatorId()))
@@ -161,8 +164,8 @@ public class FeedQueryService {
      * listener has written the timeline - so a plan the user had just made showed under
      * Mine, which reads Postgres, and not under All, until the next refresh.
      */
-    private List<ActivityFeedItem> pulledItems(UUID userId, Double cursorScore, int pageSize) {
-        List<UUID> friendIds = feedFanOutService.acceptedFriendIds(userId);
+    private List<ActivityFeedItem> pulledItems(
+            UUID userId, List<UUID> friendIds, Double cursorScore, int pageSize) {
         List<UUID> creatorIds = new ArrayList<>(feedFanOutService.influencersAmong(friendIds));
         creatorIds.add(userId);
 

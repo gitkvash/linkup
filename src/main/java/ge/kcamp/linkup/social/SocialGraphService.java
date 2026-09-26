@@ -13,9 +13,11 @@ import org.springframework.transaction.annotation.Transactional;
 import ge.kcamp.linkup.identity.UserDirectoryService;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -356,6 +358,34 @@ public class SocialGraphService {
             friendship.setMutedByB(muted);
         }
         friendshipRepository.save(friendship);
+    }
+
+    /**
+     * A user's accepted friends, and which of them they have muted.
+     *
+     * @param ids   every accepted friend, muted or not
+     * @param muted the subset of {@code ids} this user has muted
+     */
+    public record AcceptedFriends(List<UUID> ids, Set<UUID> muted) {
+    }
+
+    /**
+     * {@link #getAcceptedFriendIds} and {@link #getMutedIds} together, from one query -
+     * for the feed, which needs both on every page.
+     */
+    @Transactional(readOnly = true)
+    public AcceptedFriends getAcceptedFriends(UUID userId) {
+        List<Object[]> rows = friendshipRepository.findAcceptedFriendIdsWithMute(userId);
+        List<UUID> ids = new ArrayList<>(rows.size());
+        Set<UUID> muted = new HashSet<>();
+        for (Object[] row : rows) {
+            UUID friendId = (UUID) row[0];
+            ids.add(friendId);
+            if (Boolean.TRUE.equals(row[1])) {
+                muted.add(friendId);
+            }
+        }
+        return new AcceptedFriends(List.copyOf(ids), Set.copyOf(muted));
     }
 
     /** The friends this user has muted - whose plans the feed leaves out. */

@@ -18,6 +18,7 @@ import ge.kcamp.linkup.UserContext;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -165,7 +166,12 @@ public class ActivityController {
      * <p>
      * Answers with the read model, so the client can render the new status without a
      * follow-up GET. Creator only; everyone else gets the 404 that editing gives.
+     * <p>
+     * One transaction for the write and the read that answers it, here and in
+     * {@link #end} and {@link #cancel}: one connection borrowed, stamped and committed
+     * instead of two. The lifecycle events still go out after it commits.
      */
+    @Transactional
     @PostMapping("/{id}/start")
     public ResponseEntity<ActivityFeedItem> start(@PathVariable UUID id) {
         UUID actorId = UserContext.getUserId();
@@ -176,6 +182,7 @@ public class ActivityController {
     }
 
     /** The host says it is over, before its window would have ended it. */
+    @Transactional
     @PostMapping("/{id}/end")
     public ResponseEntity<ActivityFeedItem> end(@PathVariable UUID id) {
         UUID actorId = UserContext.getUserId();
@@ -190,6 +197,7 @@ public class ActivityController {
      * so the people in it still see what happened to it. 400 once it has already
      * happened; creator only, same 404 rule as {@link #update}.
      */
+    @Transactional
     @PostMapping("/{id}/cancel")
     public ResponseEntity<ActivityFeedItem> cancel(@PathVariable UUID id) {
         UUID actorId = UserContext.getUserId();

@@ -127,9 +127,4 @@ class FeedFanOutService {
                 .map(Map.Entry::getKey)
                 .collect(Collectors.toUnmodifiableSet());
     }
-
-    /** Exposed for the query side, which needs the same friend list it fans out to. */
-    List<UUID> acceptedFriendIds(UUID userId) {
-        return socialGraphService.getAcceptedFriendIds(userId);
-    }
 }

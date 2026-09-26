@@ -67,6 +67,13 @@ public class ActivityMapRepository {
     // members, and grouping in Java keeps each member's row intact where a GROUP BY would
     // need an array_agg per field. The centroid is the mean of the members' coordinates,
     // which is what ST_Centroid of a MULTIPOINT is.
+    //
+    // The viewport goes through app_visible_activities_in_bbox (V36), not a bare
+    // `l.geom_point && envelope`: && is not leakproof, so under RLS Postgres would not use
+    // the GiST index for it and ran the locations policy on every location in the table
+    // before looking at the box. The function reads the caller from the connection, so
+    // it answers only for the user this request is stamped with - the same one bound to
+    // :viewerId.
     private static final String CLUSTER_QUERY = """
             WITH visible AS (
                 SELECT a.activity_id, a.title, a.activity_type, a.category,
@@ -76,7 +83,8 @@ public class ActivityMapRepository {
                 FROM activities a
                 JOIN locations l ON l.activity_id = a.activity_id
                 WHERE l.geom_point IS NOT NULL
-                  AND l.geom_point && ST_MakeEnvelope(:minLng, :minLat, :maxLng, :maxLat, 4326)
+                  AND l.activity_id IN (
+                      SELECT app_visible_activities_in_bbox(:minLng, :minLat, :maxLng, :maxLat))
                   AND %s
                   AND %s
                 ORDER BY a.start_time, a.activity_id
@@ -213,6 +221,10 @@ public class ActivityMapRepository {
      * {@code ST_DistanceSphere} rather than a {@code geography} cast: the column is a
      * 4326 {@code geometry} (V11) and the spheroid's extra accuracy is meaningless for an
      * ordering the user reads as "near me".
+     * <p>
+     * The text match goes through {@code app_visible_activities_matching} (V36) for the
+     * reason {@link #CLUSTER_QUERY} gives for the viewport: ILIKE is not leakproof either,
+     * so under RLS every row paid the policy before the pattern was tried.
      */
     private static final String SEARCH_QUERY = """
             SELECT a.activity_id, a.title, a.category, a.start_time, a.has_time,
@@ -223,7 +235,7 @@ public class ActivityMapRepository {
             FROM activities a
             JOIN locations l ON l.activity_id = a.activity_id
             WHERE l.geom_point IS NOT NULL
-              AND (a.title ILIKE :pattern OR l.address_text ILIKE :pattern)
+              AND a.activity_id IN (SELECT app_visible_activities_matching(:pattern))
               AND %s
               AND %s
             ORDER BY distance_meters, a.start_time
