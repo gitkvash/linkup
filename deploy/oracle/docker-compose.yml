@@ -1,0 +1,79 @@
+# Production stack for the Oracle Cloud VM: the app, Redis, and Caddy in front for TLS.
+#
+# On the VM this lives at /opt/linkup/docker-compose.yml, and deploy.sh overwrites it from
+# the repository on every deploy - edit it here, not on the box. Secrets come from
+# /opt/linkup/.env (see env.example), which exists only on the VM.
+name: linkup
+
+services:
+  app:
+    # Built on the VM by deploy.sh: every build is tagged with its commit, and latest is
+    # retagged to the one being deployed. There is no registry.
+    image: linkup:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # The bundled Redis below, unless .env points somewhere else (e.g. the Redis the
+      # Render deployment uses, to keep its feed timelines).
+      LINKUP_REDIS_HOST: ${LINKUP_REDIS_HOST:-redis}
+      LINKUP_REDIS_PORT: ${LINKUP_REDIS_PORT:-6379}
+      LINKUP_REDIS_SSL: ${LINKUP_REDIS_SSL:-false}
+      # The image's -Xmx350m and SerialGC were sized for Render's 512 MB. Here the heap
+      # follows mem_limit instead.
+      JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError
+    mem_limit: 3g
+    volumes:
+      # LINKUP_FCM_CREDENTIALS_PATH points in here. Empty directory = push disabled.
+      - ./secrets:/run/secrets/linkup:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    # server.shutdown is graceful with a 20s phase timeout; don't SIGKILL before that.
+    stop_grace_period: 30s
+    healthcheck:
+      # The JRE image has no curl or wget; bash's /dev/tcp is enough for one GET.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /actuator/health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && grep -q '\"UP\"' <&3"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      # Flyway plus context startup on a cold JVM.
+      start_period: 180s
+    # No ports: only Caddy reaches it, over the compose network.
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${LINKUP_REDIS_PASSWORD:?set LINKUP_REDIS_PASSWORD in .env}
+    # AOF so feed timelines survive a restart. Not published: reachable from the app only.
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    volumes:
+      # A file mount, so deploy.sh must overwrite it in place (cp), not replace it.
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates. Losing this volume means re-issuing, and Let's Encrypt rate-limits.
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+
+volumes:
+  redis-data:
+  caddy-data:
+  caddy-config:

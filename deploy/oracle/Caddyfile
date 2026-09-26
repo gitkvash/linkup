@@ -1,0 +1,9 @@
+# Caddy obtains and renews the certificate for DOMAIN on its own; ports 80 and 443 must
+# be open in both the VCN security list and the VM's iptables (bootstrap.sh does the latter).
+#
+# The app sees Caddy's address as the peer and the client's in X-Forwarded-For, which
+# server.forward-headers-strategy=native trusts because the compose network is private-range.
+# SSE (/api/v1/feed/stream) needs nothing extra: Caddy flushes text/event-stream immediately.
+{$DOMAIN} {
+	reverse_proxy app:8080
+}

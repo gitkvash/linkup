@@ -1,0 +1,58 @@
+name: Deploy (Oracle)
+
+# Deploys main to the Oracle Cloud VM after CI has passed on it, or on demand.
+# Does nothing until the repository variable ORACLE_HOST is set, so it can sit next to the
+# Render deployment until the switch-over. Setup: deploy/oracle/README.md.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time, and never cancel one halfway through a container swap.
+concurrency:
+  group: deploy-oracle
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      vars.ORACLE_HOST != '' &&
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    env:
+      # The commit CI actually tested, not whatever main points at by now.
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      TARGET: ${{ vars.ORACLE_USER || 'ubuntu' }}@${{ vars.ORACLE_HOST }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SHA }}
+
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+          # Pinned host key rather than StrictHostKeyChecking=no.
+          KNOWN_HOSTS: ${{ vars.ORACLE_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Upload source
+        run: |
+          git archive --format=tar.gz HEAD \
+            | ssh "$TARGET" 'rm -rf /opt/linkup/src && mkdir /opt/linkup/src && tar -xzf - -C /opt/linkup/src'
+
+      - name: Build and restart
+        run: ssh "$TARGET" "bash /opt/linkup/src/deploy/oracle/deploy.sh $SHA"
+
+      - name: Smoke test through Caddy
+        # From outside the VM, so this also proves DNS, the firewall and the certificate.
+        if: vars.ORACLE_DOMAIN != ''
+        run: curl -fsS --retry 6 --retry-delay 5 --retry-all-errors "https://${{ vars.ORACLE_DOMAIN }}/actuator/health"

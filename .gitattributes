@@ -1,2 +1,4 @@
 /mvnw text eol=lf
 *.cmd text eol=crlf
+# Shell scripts run on Linux (the Oracle VM, CI); CRLF breaks them.
+*.sh text eol=lf
