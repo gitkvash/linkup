@@ -1,6 +1,7 @@
 package ge.kcamp.linkup.identity.controller;
 
 import ge.kcamp.linkup.UserContext;
+import ge.kcamp.linkup.identity.AccountDeletionService;
 import ge.kcamp.linkup.identity.ProfileService;
 import ge.kcamp.linkup.identity.UserDirectoryService;
 import ge.kcamp.linkup.identity.UserSummary;
@@ -9,6 +10,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -26,10 +28,15 @@ public class UserController {
 
     private final UserDirectoryService userDirectoryService;
     private final ProfileService profileService;
+    private final AccountDeletionService accountDeletionService;
 
-    public UserController(UserDirectoryService userDirectoryService, ProfileService profileService) {
+    public UserController(
+            UserDirectoryService userDirectoryService,
+            ProfileService profileService,
+            AccountDeletionService accountDeletionService) {
         this.userDirectoryService = userDirectoryService;
         this.profileService = profileService;
+        this.accountDeletionService = accountDeletionService;
     }
 
     /** Who am I - lets the client confirm its stored session against the server. */
@@ -50,6 +57,18 @@ public class UserController {
         return profileService.update(UserContext.getUserId(), request)
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    /**
+     * Delete your own account and everything in it, for good. Like {@link #updateMe}, the
+     * id comes from the token: there is no way to name anyone else's. A second call after
+     * the first succeeded answers 404, which the client treats the same as 204.
+     */
+    @DeleteMapping("/me")
+    public ResponseEntity<Void> deleteMe() {
+        return accountDeletionService.deleteOwnAccount(UserContext.getUserId())
+                ? ResponseEntity.noContent().build()
+                : ResponseEntity.notFound().build();
     }
 
     /**

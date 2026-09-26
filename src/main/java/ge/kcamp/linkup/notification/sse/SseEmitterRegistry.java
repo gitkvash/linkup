@@ -179,6 +179,18 @@ public class SseEmitterRegistry {
         }
     }
 
+    /**
+     * Ends every open stream of one user, for an account that no longer exists. The
+     * streams would otherwise stay open, heartbeating, until their timeout.
+     */
+    public void closeAll(UUID userId) {
+        List<Connection> connections = emittersByUser.remove(userId);
+        if (connections == null) {
+            return;
+        }
+        connections.forEach(connection -> close(userId, connection));
+    }
+
     private void write(UUID userId, Connection connection, SseEmitter.SseEventBuilder event, Runnable after) {
         try {
             writers.execute(() -> {

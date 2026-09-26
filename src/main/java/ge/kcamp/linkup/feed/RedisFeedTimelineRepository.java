@@ -120,6 +120,14 @@ class RedisFeedTimelineRepository {
                 activityIds.stream().map(UUID::toString).toArray());
     }
 
+    /**
+     * Drops a user's whole timeline, for an account that no longer exists. Its entries
+     * would expire on the TTL, but they are a list of who that person was following.
+     */
+    void clear(UUID userId) {
+        redisTemplate.delete(timelineKey(userId));
+    }
+
     private static String timelineKey(UUID userId) {
         return KEY_PREFIX + userId;
     }

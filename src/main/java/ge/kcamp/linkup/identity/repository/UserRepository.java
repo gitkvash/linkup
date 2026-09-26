@@ -31,6 +31,17 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     Optional<User> findByGoogleId(String googleId);
 
     /**
+     * Deletes the account this connection is stamped as ({@code app.current_user_id}) and
+     * everything that belongs to it, in one statement - see V33 for what goes and why.
+     * False if there was no such account.
+     * <p>
+     * A SELECT, because that is how Postgres calls a function; it writes all the same, so
+     * the caller's transaction must not be read-only.
+     */
+    @Query(value = "SELECT app_delete_current_account()", nativeQuery = true)
+    boolean deleteCurrentAccount();
+
+    /**
      * Case-insensitive prefix-or-substring match, excluding the caller (there's no
      * point offering to befriend yourself).
      * <p>

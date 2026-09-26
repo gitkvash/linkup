@@ -359,6 +359,27 @@ has "the 405 body still carries a message" "$(curl -s -X PUT -H "$AUTHA" "$API/f
 echo "== unfriend (social screen) =="
 check "DELETE /friends/{userId}" 204 "$(code -X DELETE -H "$AUTHA" "$API/friends/$IDB")"
 
+echo "== account deletion (profile screen) =="
+# UserApi.deleteMe - the App Store's in-app deletion. A throwaway account, so nothing above
+# loses the users it depends on; it leaves a friend request and a plan behind to prove the
+# delete reaches rows that reference it (V33).
+D="cc_d_$STAMP"; RD=$(reg "$D")
+TD=$(jsonf "$RD" token); IDD=$(jsonf "$RD" userId); RTD=$(jsonf "$RD" refreshToken)
+AUTHD="Authorization: Bearer $TD"
+check "the doomed account can send a request" 204 "$(code -X POST "$API/friends/request" -H "$JSON" -H "$AUTHD" -d "{\"targetUserId\":\"$IDA\"}")"
+DPLAN=$(jsonf "$(curl -s -X POST "$API/activities" -H "$JSON" -H "$AUTHD" -d '{
+  "title":"Deleted with its host","startTime":"2031-03-04T15:00:00.000Z","endTime":null,"hasTime":true,
+  "lat":null,"lng":null,"addressText":null,"visibility":"PUBLIC","inviteeUserIds":[]}')" id)
+if [ -n "$DPLAN" ]; then ok "and host a plan"; else bad "the doomed account's plan was not created"; fi
+check "DELETE /users/me" 204 "$(code -X DELETE -H "$AUTHD" "$API/users/me")"
+# ProfileRepository.deleteAccount counts this as success: a retry after a lost response.
+check "and again finds nothing to delete" 404 "$(code -X DELETE -H "$AUTHD" "$API/users/me")"
+check "the account is gone for everyone else" 404 "$(code -H "$AUTHA" "$API/users/$IDD")"
+check "its password no longer signs in" 401 "$(code -X POST "$API/auth/login" -H "$JSON" -d "{\"username\":\"$D\",\"password\":\"password123\"}")"
+check "its refresh token no longer mints a session" 401 "$(code -X POST "$API/auth/refresh" -H "$JSON" -d "{\"refreshToken\":\"$RTD\"}")"
+check "its plan went with it" 404 "$(code -H "$AUTHA" "$API/activities/$DPLAN")"
+case "$(curl -s -H "$AUTHA" "$API/friends/requests")" in *"$IDD"*) bad "A still sees the deleted account's request" ;; *) ok "A no longer sees the deleted account's request" ;; esac
+
 echo
 echo "==== $pass passed, $fail failed ===="
 [ "$fail" -eq 0 ]

@@ -1,6 +1,7 @@
 package ge.kcamp.linkup.feed;
 
 import ge.kcamp.linkup.activity.ActivityCreatedEvent;
+import ge.kcamp.linkup.identity.AccountDeletedEvent;
 import ge.kcamp.linkup.social.FriendshipAcceptedEvent;
 import org.springframework.modulith.events.ApplicationModuleListener;
 import org.springframework.stereotype.Component;
@@ -16,9 +17,11 @@ import org.springframework.stereotype.Component;
 class FeedFanOutEventListener {
 
     private final FeedFanOutService feedFanOutService;
+    private final RedisFeedTimelineRepository timelineRepository;
 
-    FeedFanOutEventListener(FeedFanOutService feedFanOutService) {
+    FeedFanOutEventListener(FeedFanOutService feedFanOutService, RedisFeedTimelineRepository timelineRepository) {
         this.feedFanOutService = feedFanOutService;
+        this.timelineRepository = timelineRepository;
     }
 
     @ApplicationModuleListener
@@ -37,5 +40,16 @@ class FeedFanOutEventListener {
     @ApplicationModuleListener
     void onFriendshipAccepted(FriendshipAcceptedEvent event) {
         feedFanOutService.backfillNewFriendship(event.userAId(), event.userBId());
+    }
+
+    /**
+     * Only the deleted account's own timeline. Its plans are still entries in its
+     * friends' timelines, and are left there: the read side already drops an entry with
+     * no row behind it (see {@code FeedQueryService}), and finding them all would mean
+     * knowing the friend list the delete has just removed.
+     */
+    @ApplicationModuleListener
+    void onAccountDeleted(AccountDeletedEvent event) {
+        timelineRepository.clear(event.userId());
     }
 }
