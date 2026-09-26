@@ -1,7 +1,6 @@
 package ge.kcamp.linkup.activity.command;
 
 import ge.kcamp.linkup.AbstractIntegrationTest;
-import ge.kcamp.linkup.UserContext;
 import ge.kcamp.linkup.activity.ActivityFeedItem;
 import ge.kcamp.linkup.activity.entity.Activity;
 import ge.kcamp.linkup.activity.enums.ActivityVisibility;
@@ -10,13 +9,9 @@ import ge.kcamp.linkup.activity.query.ActivityQueryRepository;
 import ge.kcamp.linkup.activity.repository.ActivityRepository;
 import ge.kcamp.linkup.activity.repository.LocationRepository;
 import ge.kcamp.linkup.activity.repository.ParticipantRepository;
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.PersistenceContext;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.ZonedDateTime;
 import java.util.List;
@@ -36,7 +31,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * {@code ON DELETE CASCADE} added in V14 to take participants and the location with it.
  */
 @SpringBootTest
-@Transactional
 class ActivityEditIT extends AbstractIntegrationTest {
 
     @Autowired
@@ -54,30 +48,18 @@ class ActivityEditIT extends AbstractIntegrationTest {
     @Autowired
     private ActivityQueryRepository queryRepository;
 
-    @PersistenceContext
-    private EntityManager entityManager;
-
-    @AfterEach
-    void clearUserContext() {
-        UserContext.clear();
-    }
-
     /**
-     * The query side reads through JDBC, not Hibernate, so it cannot see writes still
-     * sitting in the persistence context - and inside this test's transaction the
-     * handler's saves are exactly that. Nothing in production hits this (the request
-     * transaction has committed by the time anything reads), so the flush belongs here
-     * rather than in the handler.
+     * Each handler call commits on its own, as a request does (see
+     * {@link AbstractIntegrationTest} for why this class has no test transaction), so the
+     * JDBC read side sees it without a flush.
      */
     private Optional<ActivityFeedItem> readModel(UUID activityId, UUID viewerId) {
-        entityManager.flush();
         return queryRepository.findById(activityId, viewerId);
     }
 
     @Test
     void updateReplacesTheEditableFieldsAndMovesTheLocation() {
-        UUID creatorId = UUID.randomUUID();
-        UserContext.setUserId(creatorId);
+        UUID creatorId = actAs(newUser());
         Activity created = createPlan(creatorId);
 
         commandHandler.handle(new UpdateActivityCommand(
@@ -96,8 +78,7 @@ class ActivityEditIT extends AbstractIntegrationTest {
     /** The creator joins their own plan at creation; an edit must not disturb that. */
     @Test
     void updateLeavesParticipantsAlone() {
-        UUID creatorId = UUID.randomUUID();
-        UserContext.setUserId(creatorId);
+        UUID creatorId = actAs(newUser());
         Activity created = createPlan(creatorId);
 
         commandHandler.handle(new UpdateActivityCommand(
@@ -117,12 +98,11 @@ class ActivityEditIT extends AbstractIntegrationTest {
      */
     @Test
     void onlyTheCreatorMayEditOrDelete() {
-        UUID creatorId = UUID.randomUUID();
-        UUID strangerId = UUID.randomUUID();
-        UserContext.setUserId(creatorId);
+        UUID strangerId = newUser();
+        UUID creatorId = actAs(newUser());
         Activity created = createPlan(creatorId);
 
-        UserContext.setUserId(strangerId);
+        actAs(strangerId);
         assertThatThrownBy(() -> commandHandler.handle(new UpdateActivityCommand(
                 created.getId(), strangerId, "Hijacked", ZonedDateTime.now().plusDays(1),
                 null, true, 41.7, 44.8, "Somewhere", ActivityVisibility.PUBLIC, null, null,
@@ -133,7 +113,7 @@ class ActivityEditIT extends AbstractIntegrationTest {
                 commandHandler.handle(new DeleteActivityCommand(created.getId(), strangerId)))
                 .isInstanceOf(ActivityNotVisibleException.class);
 
-        UserContext.setUserId(creatorId);
+        actAs(creatorId);
         assertThat(activityRepository.findById(created.getId())).isPresent();
         assertThat(readModel(created.getId(), creatorId).orElseThrow().title())
                 .isEqualTo("Football");
@@ -141,8 +121,7 @@ class ActivityEditIT extends AbstractIntegrationTest {
 
     @Test
     void deleteTakesTheLocationAndParticipantsWithIt() {
-        UUID creatorId = UUID.randomUUID();
-        UserContext.setUserId(creatorId);
+        UUID creatorId = actAs(newUser());
         Activity created = createPlan(creatorId);
         UUID activityId = created.getId();
 
@@ -159,8 +138,7 @@ class ActivityEditIT extends AbstractIntegrationTest {
     /** An edit that clears both the coordinates and the address drops the row. */
     @Test
     void updateWithNoPlaceRemovesTheLocation() {
-        UUID creatorId = UUID.randomUUID();
-        UserContext.setUserId(creatorId);
+        UUID creatorId = actAs(newUser());
         Activity created = createPlan(creatorId);
 
         commandHandler.handle(new UpdateActivityCommand(

@@ -1,9 +1,6 @@
 package ge.kcamp.linkup.activity.repository;
 
 import ge.kcamp.linkup.AbstractIntegrationTest;
-import ge.kcamp.linkup.ContainerDatabase;
-import ge.kcamp.linkup.DatabaseRole;
-import ge.kcamp.linkup.UserContext;
 import ge.kcamp.linkup.activity.dto.BoundingBox;
 import ge.kcamp.linkup.activity.dto.MapClusterMemberDto;
 import ge.kcamp.linkup.activity.dto.MapPlaceDto;
@@ -13,7 +10,6 @@ import ge.kcamp.linkup.activity.enums.ActivityCategory;
 import ge.kcamp.linkup.activity.enums.ActivityType;
 import ge.kcamp.linkup.activity.enums.ActivityVisibility;
 import ge.kcamp.linkup.activity.enums.PlaceKind;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.GeometryFactory;
@@ -21,11 +17,8 @@ import org.locationtech.jts.geom.PrecisionModel;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 
 import java.time.ZonedDateTime;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -34,14 +27,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * The seeded places (V31), the trigger that links a plan to the place it is at, and the
  * "plans this week" count and list the map reads.
- * <p>
- * Not {@code @Transactional}. {@code RlsDataSource} stamps the caller's id on a connection
- * when it is borrowed, and a test-managed transaction borrows one before the test body has
- * set {@link UserContext} - every write would then run as nobody and fail the insert
- * policy. Here each repository call borrows its own connection after the user is set, as a
- * request does, and {@link #deleteCreatedPlans()} cleans up as the owner.
- * <p>
- * {@link #pointBothPoolsAtTheContainer} is also load-bearing: see {@link ContainerDatabase}.
  * <p>
  * Coordinates are the seed's own: Lisi Lake's centre is 41.743854, 44.734537.
  */
@@ -67,25 +52,6 @@ class PlaceRepositoryIT extends AbstractIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     private final GeometryFactory geometryFactory = new GeometryFactory(new PrecisionModel(), 4326);
-
-    private final List<UUID> created = new ArrayList<>();
-    private final List<UUID> users = new ArrayList<>();
-
-    @DynamicPropertySource
-    static void pointBothPoolsAtTheContainer(DynamicPropertyRegistry registry) {
-        ContainerDatabase.register(registry);
-    }
-
-    @AfterEach
-    void deleteCreatedPlans() {
-        UserContext.clear();
-        DatabaseRole.runAsSystem(() -> {
-            created.forEach(id -> jdbcTemplate.update("DELETE FROM activities WHERE activity_id = ?", id));
-            users.forEach(id -> jdbcTemplate.update("DELETE FROM users WHERE user_id = ?", id));
-        });
-        created.clear();
-        users.clear();
-    }
 
     @Test
     void theSeedIsOnTheMapWithItsKindAndGeorgianName() {
@@ -181,22 +147,6 @@ class PlaceRepositoryIT extends AbstractIntegrationTest {
                 .containsExactly("Public, Saturday");
     }
 
-    /** A real row: activities.creator_id references users. Written as the owner. */
-    private UUID newUser() {
-        UUID id = UUID.randomUUID();
-        DatabaseRole.runAsSystem(() -> jdbcTemplate.update(
-                "INSERT INTO users (user_id, username, password_hash) VALUES (?, ?, 'x')",
-                id, "place_it_" + id.toString().substring(0, 8)));
-        users.add(id);
-        return id;
-    }
-
-    /** Who the next borrowed connection is stamped as - the request's user, in the app. */
-    private static UUID actAs(UUID userId) {
-        UserContext.setUserId(userId);
-        return userId;
-    }
-
     private UUID lisiId() {
         return jdbcTemplate.queryForObject(
                 "SELECT place_id FROM places WHERE name = 'Lisi Lake'", UUID.class);
@@ -232,7 +182,6 @@ class PlaceRepositoryIT extends AbstractIntegrationTest {
                 .startTime(startTime)
                 .hasTime(true)
                 .build());
-        created.add(saved.getId());
 
         locationRepository.saveAndFlush(Location.builder()
                 .activity(saved)

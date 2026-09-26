@@ -10,8 +10,6 @@ import ge.kcamp.linkup.activity.entity.Location;
 import ge.kcamp.linkup.activity.enums.ActivityCategory;
 import ge.kcamp.linkup.activity.enums.ActivityType;
 import ge.kcamp.linkup.activity.enums.ActivityVisibility;
-import ge.kcamp.linkup.UserContext;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.GeometryFactory;
@@ -19,7 +17,6 @@ import org.locationtech.jts.geom.Point;
 import org.locationtech.jts.geom.PrecisionModel;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.ZonedDateTime;
 import java.util.List;
@@ -37,7 +34,6 @@ import static org.assertj.core.api.Assertions.within;
  * into one giant "cluster" instead of individual pins.
  */
 @SpringBootTest
-@Transactional
 class ActivityMapRepositoryIT extends AbstractIntegrationTest {
 
     @Autowired
@@ -51,16 +47,10 @@ class ActivityMapRepositoryIT extends AbstractIntegrationTest {
 
     private final GeometryFactory geometryFactory = new GeometryFactory(new PrecisionModel(), 4326);
 
-    @AfterEach
-    void clearUserContext() {
-        UserContext.clear();
-    }
-
     @Test
     void groupsNearbyActivitiesIntoOneClusterAndLeavesFarActivityAsAPin() {
-        UUID creatorId = UUID.randomUUID();
         // activity_insert_policy (RLS) requires creator_id == current_user_id.
-        UserContext.setUserId(creatorId);
+        UUID creatorId = actAs(newUser());
 
         // Two activities ~10m apart (should cluster together at a large eps).
         createActivityAt(creatorId, "Coffee A", 41.7151, 44.8271);
@@ -84,8 +74,7 @@ class ActivityMapRepositoryIT extends AbstractIntegrationTest {
 
     @Test
     void aClusterAtOnePlaceCarriesItsPlansSoonestFirstAtEveryZoom() {
-        UUID creatorId = UUID.randomUUID();
-        UserContext.setUserId(creatorId);
+        UUID creatorId = actAs(newUser());
 
         // Same coordinates: no eps separates these, which is why the cluster has to be
         // able to list them.
@@ -112,8 +101,7 @@ class ActivityMapRepositoryIT extends AbstractIntegrationTest {
 
     @Test
     void aPinCarriesTheCategoryItsGlyphIsDrawnFrom() {
-        UUID creatorId = UUID.randomUUID();
-        UserContext.setUserId(creatorId);
+        UUID creatorId = actAs(newUser());
 
         createActivityAt(creatorId, "Sunset run", 41.7151, 44.8271, ActivityCategory.RUNNING);
 
@@ -130,8 +118,7 @@ class ActivityMapRepositoryIT extends AbstractIntegrationTest {
 
     @Test
     void searchMatchesTitleOrAddressAndOrdersByDistanceFromTheMapCentre() {
-        UUID creatorId = UUID.randomUUID();
-        UserContext.setUserId(creatorId);
+        UUID creatorId = actAs(newUser());
 
         createActivityAt(creatorId, "Coffee at Fabrika", 42.1, 45.3, ActivityCategory.FOOD_AND_DRINK);
         createActivityAt(creatorId, "Coffee run", 41.7151, 44.8271, ActivityCategory.RUNNING);
@@ -150,8 +137,7 @@ class ActivityMapRepositoryIT extends AbstractIntegrationTest {
 
     @Test
     void searchTreatsAWildcardAsTheCharacterTheUserTyped() {
-        UUID creatorId = UUID.randomUUID();
-        UserContext.setUserId(creatorId);
+        UUID creatorId = actAs(newUser());
 
         createActivityAt(creatorId, "Plain plan", 41.7151, 44.8271, ActivityCategory.GENERAL);
 
@@ -164,13 +150,11 @@ class ActivityMapRepositoryIT extends AbstractIntegrationTest {
 
     @Test
     void searchDoesNotReturnSomeoneElsesPrivatePlan() {
-        UUID creatorId = UUID.randomUUID();
-        UserContext.setUserId(creatorId);
+        UUID creatorId = actAs(newUser());
         createActivityAt(creatorId, "Secret sauna", 41.7151, 44.8271,
                 ActivityCategory.GENERAL, ActivityVisibility.PRIVATE);
 
-        UUID strangerId = UUID.randomUUID();
-        UserContext.setUserId(strangerId);
+        UUID strangerId = actAs(newUser());
         List<MapSearchResultDto> results = activityMapRepository.searchNearby(
                 "sauna", 41.7151, 44.8271, 8, strangerId);
 

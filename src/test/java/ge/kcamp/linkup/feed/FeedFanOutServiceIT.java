@@ -1,6 +1,7 @@
 package ge.kcamp.linkup.feed;
 
 import ge.kcamp.linkup.AbstractIntegrationTest;
+import ge.kcamp.linkup.DatabaseRole;
 import ge.kcamp.linkup.activity.entity.Activity;
 import ge.kcamp.linkup.activity.enums.ActivityCategory;
 import ge.kcamp.linkup.activity.enums.ActivityType;
@@ -11,7 +12,6 @@ import ge.kcamp.linkup.social.SocialGraphService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.ZonedDateTime;
@@ -20,8 +20,12 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+/**
+ * Friend requests and groups are written as the user making them, as a request would;
+ * fan-out and backfill run as {@link DatabaseRole#SYSTEM}, as they do on the listener
+ * thread in production ({@code FeedFanOutEventListener}).
+ */
 @SpringBootTest
-@Transactional
 class FeedFanOutServiceIT extends AbstractIntegrationTest {
 
     @Autowired
@@ -41,15 +45,15 @@ class FeedFanOutServiceIT extends AbstractIntegrationTest {
 
     @Test
     void fanOutOnWritePushesToBothCreatorAndAcceptedFriendTimelines() {
-        UUID creatorId = UUID.randomUUID();
-        UUID friendId = UUID.randomUUID();
+        UUID creatorId = newUser();
+        UUID friendId = newUser();
         UUID activityId = UUID.randomUUID();
         Instant startTime = Instant.now();
 
-        socialGraphService.sendFriendRequest(creatorId, friendId);
-        socialGraphService.acceptFriendRequest(friendId, creatorId);
+        befriend(creatorId, friendId);
 
-        feedFanOutService.fanOutOnWrite(creatorId, activityId, startTime, null);
+        DatabaseRole.runAsSystem(() ->
+                feedFanOutService.fanOutOnWrite(creatorId, activityId, startTime, null));
 
         Double justAbove = FeedTimelineScore.of(activityId, startTime) + 1;
         List<UUID> creatorTimeline = timelineRepository.read(creatorId, justAbove, 10);
@@ -61,12 +65,13 @@ class FeedFanOutServiceIT extends AbstractIntegrationTest {
 
     @Test
     void fanOutOnWriteDoesNotPushToNonFriends() {
-        UUID creatorId = UUID.randomUUID();
-        UUID strangerId = UUID.randomUUID();
+        UUID creatorId = newUser();
+        UUID strangerId = newUser();
         UUID activityId = UUID.randomUUID();
         Instant startTime = Instant.now();
 
-        feedFanOutService.fanOutOnWrite(creatorId, activityId, startTime, null);
+        DatabaseRole.runAsSystem(() ->
+                feedFanOutService.fanOutOnWrite(creatorId, activityId, startTime, null));
 
         List<UUID> strangerTimeline =
                 timelineRepository.read(strangerId, FeedTimelineScore.of(activityId, startTime) + 1, 10);
@@ -80,15 +85,16 @@ class FeedFanOutServiceIT extends AbstractIntegrationTest {
      */
     @Test
     void fanOutOnWriteReachesGroupMembersWhoAreNotFriends() {
-        UUID creatorId = UUID.randomUUID();
-        UUID memberId = UUID.randomUUID();
+        UUID memberId = newUser();
+        UUID creatorId = actAs(newUser());
         UUID activityId = UUID.randomUUID();
         Instant startTime = Instant.now();
 
         UUID groupId = groupService.createGroup(creatorId, "fan-out probe").getId();
         groupService.addMember(creatorId, groupId, memberId);
 
-        feedFanOutService.fanOutOnWrite(creatorId, activityId, startTime, groupId);
+        DatabaseRole.runAsSystem(() ->
+                feedFanOutService.fanOutOnWrite(creatorId, activityId, startTime, groupId));
 
         Double justAbove = FeedTimelineScore.of(activityId, startTime) + 1;
         assertThat(timelineRepository.read(creatorId, justAbove, 10)).contains(activityId);
@@ -102,18 +108,24 @@ class FeedFanOutServiceIT extends AbstractIntegrationTest {
      */
     @Test
     void aNewFriendshipBringsTheOtherSidesPlansThatAreStillOn() {
-        UUID creatorId = UUID.randomUUID();
-        UUID friendId = UUID.randomUUID();
+        UUID friendId = newUser();
+        UUID creatorId = actAs(newUser());
         UUID upcoming = createPublicPlan(creatorId, ZonedDateTime.now().plusHours(2));
         UUID ended = createPublicPlan(creatorId, ZonedDateTime.now().minusHours(5));
 
-        socialGraphService.sendFriendRequest(creatorId, friendId);
-        socialGraphService.acceptFriendRequest(friendId, creatorId);
-        feedFanOutService.backfillNewFriendship(creatorId, friendId);
+        befriend(creatorId, friendId);
+        DatabaseRole.runAsSystem(() -> feedFanOutService.backfillNewFriendship(creatorId, friendId));
 
         List<UUID> friendTimeline = timelineRepository.read(friendId, null, 10);
         assertThat(friendTimeline).contains(upcoming);
         assertThat(friendTimeline).doesNotContain(ended);
+    }
+
+    private void befriend(UUID requesterId, UUID accepterId) {
+        actAs(requesterId);
+        socialGraphService.sendFriendRequest(requesterId, accepterId);
+        actAs(accepterId);
+        socialGraphService.acceptFriendRequest(accepterId, requesterId);
     }
 
     private UUID createPublicPlan(UUID creatorId, ZonedDateTime startTime) {
@@ -130,11 +142,12 @@ class FeedFanOutServiceIT extends AbstractIntegrationTest {
     /** The read cursor is exclusive, so an item is never served twice. */
     @Test
     void readExcludesTheCursorItself() {
-        UUID userId = UUID.randomUUID();
+        UUID userId = newUser();
         UUID activityId = UUID.randomUUID();
         Instant startTime = Instant.now();
 
-        feedFanOutService.fanOutOnWrite(userId, activityId, startTime, null);
+        DatabaseRole.runAsSystem(() ->
+                feedFanOutService.fanOutOnWrite(userId, activityId, startTime, null));
 
         double ownScore = FeedTimelineScore.of(activityId, startTime);
         assertThat(timelineRepository.read(userId, ownScore, 10)).doesNotContain(activityId);
