@@ -101,7 +101,7 @@ class FeedFanOutService {
         }
         Instant after = Instant.now().minus(BACKFILL_LOOKBACK);
         for (ActivityFeedItem item : activityQueryService.findByCreatorIn(List.of(creatorId), after, friendId)) {
-            if (item.status() == ActivityStatus.ENDED) {
+            if (item.status().isOver()) {
                 continue;
             }
             timelineRepository.push(friendId, item.activityId(),

@@ -24,68 +24,79 @@ class ActivityStatusResolverTest {
     }
 
     @Test
-    void itIsStillUpcomingInTheFiveMinutesAfterItsStartTime() {
-        // People are still walking to it; "happening now" would be a claim about a room
-        // that is empty.
-        assertThat(resolve(plan(NOW.minusMinutes(4)))).isEqualTo(ActivityStatus.UPCOMING);
+    void itNeverStartsByItself() {
+        // Only the host says a plan is happening; the clock passing its start time
+        // doesn't put anyone in the room.
+        assertThat(resolve(plan(NOW.minusMinutes(5)))).isEqualTo(ActivityStatus.UPCOMING);
+        assertThat(resolve(plan(NOW.minusMinutes(119)))).isEqualTo(ActivityStatus.UPCOMING);
     }
 
     @Test
-    void itStartsByItselfFiveMinutesIn() {
-        assertThat(resolve(plan(NOW.minusMinutes(5)))).isEqualTo(ActivityStatus.LIVE);
-        assertThat(resolve(plan(NOW.minusMinutes(90)))).isEqualTo(ActivityStatus.LIVE);
+    void aPlanNobodyStartedIsCancelledTwoHoursIn() {
+        assertThat(resolve(plan(NOW.minusHours(2)))).isEqualTo(ActivityStatus.CANCELLED);
+        assertThat(resolve(plan(NOW.minusDays(3)))).isEqualTo(ActivityStatus.CANCELLED);
     }
 
     @Test
-    void itEndsByItselfTwoHoursIn() {
-        assertThat(resolve(plan(NOW.minusHours(2)))).isEqualTo(ActivityStatus.ENDED);
+    void theHostCancellingItCancelsItWhateverElseHappened() {
+        Lifecycle cancelled = new Lifecycle(
+                NOW.plusHours(5), null, true, null, null, null, null, null, NOW.minusMinutes(1));
+        assertThat(resolve(cancelled)).isEqualTo(ActivityStatus.CANCELLED);
+
+        Lifecycle cancelledWhileLive = new Lifecycle(
+                NOW.minusMinutes(30), null, true, null, null, null, NOW.minusMinutes(30), null, NOW);
+        assertThat(resolve(cancelledWhileLive)).isEqualTo(ActivityStatus.CANCELLED);
+    }
+
+    @Test
+    void theHostStartingItMakesItLiveUntilItsWindowRunsOut() {
+        Lifecycle startedEarly = started(NOW.plusHours(2), null, NOW.minusMinutes(30));
+        assertThat(resolve(startedEarly)).isEqualTo(ActivityStatus.LIVE);
+
+        Lifecycle startedLongAgo = started(NOW.plusHours(2), null, NOW.minusHours(3));
+        assertThat(resolve(startedLongAgo)).isEqualTo(ActivityStatus.ENDED);
+    }
+
+    @Test
+    void aLateStartStillRescuesAPlanTheClockCancelled() {
+        Lifecycle startedLate = started(NOW.minusHours(4), null, NOW.minusMinutes(10));
+        assertThat(resolve(startedLate)).isEqualTo(ActivityStatus.LIVE);
     }
 
     @Test
     void anExplicitEndTimeWinsOverTheTwoHourDefault() {
-        Lifecycle longPlan = withEnd(NOW.minusHours(3), NOW.plusHours(1));
+        Lifecycle longPlan = started(NOW.minusHours(3), NOW.plusHours(1), NOW.minusHours(3));
         assertThat(resolve(longPlan)).isEqualTo(ActivityStatus.LIVE);
 
-        Lifecycle shortPlan = withEnd(NOW.minusHours(1), NOW.minusMinutes(10));
+        Lifecycle shortPlan = started(NOW.minusHours(1), NOW.minusMinutes(10), NOW.minusHours(1));
         assertThat(resolve(shortPlan)).isEqualTo(ActivityStatus.ENDED);
     }
 
     @Test
     void anEndTimeThatIsNotAfterTheStartIsIgnoredRatherThanEndingItAtOnce() {
         // The column is nullable and has been written by a parser, so this shape reaches
-        // here; read as a window it would be negative and end every such plan on creation.
-        assertThat(resolve(withEnd(NOW.minusMinutes(30), NOW.minusHours(4))))
+        // here; read as a window it would be negative and end every such plan on start.
+        assertThat(resolve(started(NOW.minusMinutes(30), NOW.minusHours(4), NOW.minusMinutes(30))))
                 .isEqualTo(ActivityStatus.LIVE);
-    }
-
-    @Test
-    void theHostStartingItEarlyMakesItLiveAndMovesTheWindow() {
-        Lifecycle started = new Lifecycle(
-                NOW.plusHours(2), null, true, null, null, null, NOW.minusMinutes(30), null);
-        assertThat(resolve(started)).isEqualTo(ActivityStatus.LIVE);
-
-        Lifecycle startedLongAgo = new Lifecycle(
-                NOW.plusHours(2), null, true, null, null, null, NOW.minusHours(3), null);
-        assertThat(resolve(startedLongAgo)).isEqualTo(ActivityStatus.ENDED);
     }
 
     @Test
     void theHostEndingItEndsItWhateverTheClockSays() {
         Lifecycle ended = new Lifecycle(
-                NOW.plusHours(5), null, true, null, null, null, null, NOW.minusMinutes(1));
+                NOW.plusHours(5), null, true, null, null, null, NOW.minusMinutes(20), NOW.minusMinutes(1), null);
         assertThat(resolve(ended)).isEqualTo(ActivityStatus.ENDED);
     }
 
     @Test
-    void aDateOnlyPlanNeverStartsByItselfAndRunsToTheEndOfItsDay() {
-        // has_time false means the start time is midnight, which nobody chose - starting
-        // it five minutes later would call every all-day plan live at 00:05.
+    void aDateOnlyPlanNeverStartsByItselfAndIsCancelledAtTheEndOfItsDay() {
+        // has_time false means the start time is midnight, which nobody chose - so there
+        // is no two-hour grace from it, only the day.
         ZonedDateTime midnight = NOW.toLocalDate().atStartOfDay(NOW.getZone());
-        Lifecycle allDay = new Lifecycle(midnight, null, false, null, null, null, null, null);
+        Lifecycle allDay = new Lifecycle(midnight, null, false, null, null, null, null, null, null);
 
         assertThat(resolve(allDay)).isEqualTo(ActivityStatus.UPCOMING);
         assertThat(ActivityStatusResolver.resolve(allDay, midnight.plusDays(1)))
-                .isEqualTo(ActivityStatus.ENDED);
+                .isEqualTo(ActivityStatus.CANCELLED);
     }
 
     @Test
@@ -95,7 +106,7 @@ class ActivityStatusResolverTest {
         // on its own day.
         ZonedDateTime tbilisiMidnightInUtc = ZonedDateTime.parse("2031-03-03T20:00:00Z");
         Lifecycle allDay = new Lifecycle(
-                tbilisiMidnightInUtc, null, false, null, null, null, null, null);
+                tbilisiMidnightInUtc, null, false, null, null, null, null, null, null);
 
         ZonedDateTime tbilisiMidday = ZonedDateTime.parse("2031-03-04T08:00:00Z");
         assertThat(ActivityStatusResolver.resolve(allDay, tbilisiMidday))
@@ -103,34 +114,76 @@ class ActivityStatusResolverTest {
         assertThat(ActivityStatusResolver.resolve(allDay, tbilisiMidnightInUtc.plusDays(1).minusMinutes(1)))
                 .isEqualTo(ActivityStatus.UPCOMING);
         assertThat(ActivityStatusResolver.resolve(allDay, tbilisiMidnightInUtc.plusDays(1)))
-                .isEqualTo(ActivityStatus.ENDED);
+                .isEqualTo(ActivityStatus.CANCELLED);
     }
 
     @Test
-    void aRepeatingPlanIsNotEndedForeverByItsFirstOccurrence() {
+    void aRepeatingPlanSkipsAMissedOccurrenceRatherThanCancellingTheSeries() {
         // The row stores the rule and the first occurrence; nothing materialises the
-        // rest, so reading start_time literally would end a weekly plan permanently two
+        // rest, so reading start_time literally would cancel a weekly plan for good two
         // hours into its first Tuesday.
         Lifecycle weekly = new Lifecycle(
-                NOW.minusWeeks(6).plusHours(1), null, true, RepeatFrequency.WEEKLY, 1, null, null, null);
+                NOW.minusWeeks(6).plusHours(1), null, true, RepeatFrequency.WEEKLY, 1, null, null, null, null);
 
         assertThat(resolve(weekly)).isEqualTo(ActivityStatus.UPCOMING);
     }
 
     @Test
-    void aRepeatingPlanIsLiveDuringAnOccurrenceThatIsNotItsFirst() {
+    void aRepeatingPlanIsUpcomingDuringAnOccurrenceNobodyStartedYet() {
         Lifecycle daily = new Lifecycle(
-                NOW.minusDays(10).minusMinutes(30), null, true, RepeatFrequency.DAILY, 1, null, null, null);
+                NOW.minusDays(10).minusMinutes(30), null, true, RepeatFrequency.DAILY, 1, null, null, null, null);
 
-        assertThat(resolve(daily)).isEqualTo(ActivityStatus.LIVE);
+        assertThat(resolve(daily)).isEqualTo(ActivityStatus.UPCOMING);
     }
 
     @Test
-    void aRepeatRuleThatHasRunOutIsOver() {
+    void startingOneOccurrenceOfARepeatingPlanDoesNotEndTheSeries() {
+        ZonedDateTime firstWeek = NOW.minusWeeks(3);
+        // Started an hour early for the first week, and left to run out its window.
+        Lifecycle weekly = new Lifecycle(
+                firstWeek, null, true, RepeatFrequency.WEEKLY, 1, null,
+                firstWeek.minusHours(1), null, null);
+
+        assertThat(ActivityStatusResolver.resolve(weekly, firstWeek.plusMinutes(30)))
+                .isEqualTo(ActivityStatus.LIVE);
+        // Once that run is over the series is waiting on next week, not over.
+        assertThat(ActivityStatusResolver.resolve(weekly, firstWeek.plusHours(2)))
+                .isEqualTo(ActivityStatus.UPCOMING);
+        assertThat(resolve(weekly)).isEqualTo(ActivityStatus.UPCOMING);
+    }
+
+    @Test
+    void aStartedRepeatingPlanIsLiveDuringTheRunTheHostStarted() {
+        ZonedDateTime thisWeek = NOW.minusMinutes(20);
+        Lifecycle weekly = new Lifecycle(
+                thisWeek.minusWeeks(4), null, true, RepeatFrequency.WEEKLY, 1, null, thisWeek, null, null);
+
+        assertThat(resolve(weekly)).isEqualTo(ActivityStatus.LIVE);
+    }
+
+    @Test
+    void aRepeatRuleThatHasRunOutWithItsLastOccurrenceMissedIsCancelled() {
         Lifecycle finished = new Lifecycle(
-                NOW.minusWeeks(6), null, true, RepeatFrequency.WEEKLY, 1, NOW.minusWeeks(2), null, null);
+                NOW.minusWeeks(6), null, true, RepeatFrequency.WEEKLY, 1, NOW.minusWeeks(2), null, null, null);
+
+        assertThat(resolve(finished)).isEqualTo(ActivityStatus.CANCELLED);
+    }
+
+    @Test
+    void aRepeatRuleThatHasRunOutWithItsLastOccurrenceStartedHasEnded() {
+        ZonedDateTime last = NOW.minusWeeks(2);
+        Lifecycle finished = new Lifecycle(
+                NOW.minusWeeks(6), null, true, RepeatFrequency.WEEKLY, 1, last, last, null, null);
 
         assertThat(resolve(finished)).isEqualTo(ActivityStatus.ENDED);
+    }
+
+    @Test
+    void onlyEndedAndCancelledAreOver() {
+        assertThat(ActivityStatus.UPCOMING.isOver()).isFalse();
+        assertThat(ActivityStatus.LIVE.isOver()).isFalse();
+        assertThat(ActivityStatus.ENDED.isOver()).isTrue();
+        assertThat(ActivityStatus.CANCELLED.isOver()).isTrue();
     }
 
     private static ActivityStatus resolve(Lifecycle plan) {
@@ -138,10 +191,10 @@ class ActivityStatusResolverTest {
     }
 
     private static Lifecycle plan(ZonedDateTime startTime) {
-        return new Lifecycle(startTime, null, true, null, null, null, null, null);
+        return new Lifecycle(startTime, null, true, null, null, null, null, null, null);
     }
 
-    private static Lifecycle withEnd(ZonedDateTime startTime, ZonedDateTime endTime) {
-        return new Lifecycle(startTime, endTime, true, null, null, null, null, null);
+    private static Lifecycle started(ZonedDateTime startTime, ZonedDateTime endTime, ZonedDateTime startedAt) {
+        return new Lifecycle(startTime, endTime, true, null, null, null, startedAt, null, null);
     }
 }

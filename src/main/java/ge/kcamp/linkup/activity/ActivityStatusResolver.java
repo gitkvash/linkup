@@ -1,5 +1,6 @@
 package ge.kcamp.linkup.activity;
 
+import ge.kcamp.linkup.activity.entity.Activity;
 import ge.kcamp.linkup.activity.enums.ActivityStatus;
 import ge.kcamp.linkup.activity.enums.RepeatFrequency;
 
@@ -7,16 +8,18 @@ import java.time.Duration;
 import java.time.ZonedDateTime;
 
 /**
- * The one place that decides whether a plan is upcoming, happening now, or over.
+ * The one place that decides whether a plan is upcoming, happening now, over, or
+ * cancelled.
  * <p>
  * The status is derived rather than stored, and derived here rather than in each caller.
  * Two things follow from that. It is always right - a backend that was down for an hour
  * comes back with correct answers instead of a table a scheduler never got to - and it
  * costs nothing to keep true, because there is nothing to keep.
  * <p>
- * What <em>is</em> stored is what the host did: {@code startedAt} and {@code endedAt}.
- * A host who starts early or ends early overrides the clock; a host who does nothing gets
- * the clock's answer, which is the common case and the one the rule below is written for.
+ * What <em>is</em> stored is what the host did: {@code startedAt}, {@code endedAt} and
+ * {@code cancelledAt}. A plan never starts by the clock - it is live only once its host
+ * says so. One that nobody started within {@link #START_GRACE} of its start time didn't
+ * happen, and reads as cancelled.
  * <p>
  * Keep it in step with {@link ActivityStatusSql}, which says the same thing in SQL for the
  * queries that have to filter on it. If the two drift, a plan can be missing from the map
@@ -28,15 +31,15 @@ public final class ActivityStatusResolver {
     }
 
     /**
-     * How long after its start time a plan nobody touched starts by itself. Short enough
-     * that "happening now" means it, long enough that a plan is not live while people are
-     * still walking to it.
+     * How long after its start time a plan nobody started stays upcoming. Past this it is
+     * cancelled: two hours late is not "running late" any more, and a plan left upcoming
+     * forever would sit among the real ones in every list.
      */
-    public static final Duration AUTO_START_AFTER = Duration.ofMinutes(5);
+    public static final Duration START_GRACE = Duration.ofHours(2);
 
     /**
-     * How long a plan runs when nothing says otherwise. An explicit end time wins over
-     * this; most plans have none, and two hours is what a coffee, a run or a dinner
+     * How long a started plan runs when nothing says otherwise. An explicit end time wins
+     * over this; most plans have none, and two hours is what a coffee, a run or a dinner
      * takes before "is this still on?" is the wrong question to ask.
      */
     public static final Duration DEFAULT_DURATION = Duration.ofHours(2);
@@ -49,13 +52,13 @@ public final class ActivityStatusResolver {
     private static final int MAX_OCCURRENCE_STEPS = 2_000;
 
     /**
-     * Everything the rule reads. A record rather than seven parameters, because the
+     * Everything the rule reads. A record rather than nine parameters, because the
      * query side builds one per row and the entity side builds one per activity, and
      * both have to pass exactly the same things.
      *
-     * @param hasTime false when only a date was given. Such a plan never starts by
-     *                itself - midnight is not a start time anyone chose - so it stays
-     *                upcoming until its host starts it or its day runs out.
+     * @param hasTime false when only a date was given. Such a plan has no start time to
+     *                be late for, so it stays upcoming until its host starts it or its
+     *                day runs out.
      */
     public record Lifecycle(
             ZonedDateTime startTime,
@@ -65,38 +68,70 @@ public final class ActivityStatusResolver {
             Integer repeatInterval,
             ZonedDateTime repeatUntil,
             ZonedDateTime startedAt,
-            ZonedDateTime endedAt
+            ZonedDateTime endedAt,
+            ZonedDateTime cancelledAt
     ) {
+        public static Lifecycle of(Activity activity) {
+            return new Lifecycle(
+                    activity.getStartTime(), activity.getEndTime(), activity.isHasTime(),
+                    activity.getRepeatFrequency(), activity.getRepeatInterval(), activity.getRepeatUntil(),
+                    activity.getStartedAt(), activity.getEndedAt(), activity.getCancelledAt());
+        }
     }
 
     public static ActivityStatus resolve(Lifecycle plan, ZonedDateTime now) {
-        if (plan.endedAt() != null) {
-            return ActivityStatus.ENDED;
+        if (plan.cancelledAt() != null) {
+            return ActivityStatus.CANCELLED;
         }
 
         if (plan.startedAt() != null) {
             // The host started it, so the window runs from when they did, not from the
             // time on the plan - starting an hour late shouldn't end it an hour early.
-            return now.isBefore(plan.startedAt().plus(duration(plan)))
-                    ? ActivityStatus.LIVE
-                    : ActivityStatus.ENDED;
+            if (plan.endedAt() == null && now.isBefore(plan.startedAt().plus(duration(plan)))) {
+                return ActivityStatus.LIVE;
+            }
+            // Their run is over. For a one-off that is the end of it; a repeating plan
+            // goes on to the occurrence after the one they started.
+            ZonedDateTime following = followingOccurrence(plan);
+            return following == null ? ActivityStatus.ENDED : untouched(plan, now, following);
         }
 
-        ZonedDateTime occurrence = currentOccurrence(plan, now);
-        if (!now.isBefore(autoEnd(plan, occurrence))) {
+        if (plan.endedAt() != null) {
             return ActivityStatus.ENDED;
         }
-        if (plan.hasTime() && !now.isBefore(occurrence.plus(AUTO_START_AFTER))) {
-            return ActivityStatus.LIVE;
-        }
-        return ActivityStatus.UPCOMING;
+        return untouched(plan, now, plan.startTime());
     }
 
     /**
-     * How long the plan runs. An end time that isn't after the start is treated as no end
-     * time at all: the column is nullable and has been written by a parser, so "ends
-     * before it begins" is a shape that can reach here, and a negative window would end
-     * every such plan the moment it was created.
+     * Occurrences nobody has started, from {@code first} on: upcoming until the current
+     * one's grace runs out. A repeating plan skips a missed occurrence and waits for the
+     * next; only the last one there is, missed, cancels the plan.
+     */
+    private static ActivityStatus untouched(Lifecycle plan, ZonedDateTime now, ZonedDateTime first) {
+        ZonedDateTime occurrence = currentOccurrence(plan, now, first);
+        return now.isBefore(deadline(plan, occurrence))
+                ? ActivityStatus.UPCOMING
+                : ActivityStatus.CANCELLED;
+    }
+
+    /**
+     * The occurrence after the one the host started, or null if there is none. The one
+     * they started is whichever was current when they pressed start - so starting a
+     * weekly plan an hour early counts for that week, not the week before.
+     */
+    private static ZonedDateTime followingOccurrence(Lifecycle plan) {
+        if (plan.repeatFrequency() == null) {
+            return null;
+        }
+        ZonedDateTime started = currentOccurrence(plan, plan.startedAt(), plan.startTime());
+        return nextStartAfter(plan, started);
+    }
+
+    /**
+     * How long a started plan runs. An end time that isn't after the start is treated as
+     * no end time at all: the column is nullable and has been written by a parser, so
+     * "ends before it begins" is a shape that can reach here, and a negative window would
+     * end every such plan the moment it was started.
      */
     private static Duration duration(Lifecycle plan) {
         if (plan.endTime() == null || !plan.endTime().isAfter(plan.startTime())) {
@@ -106,9 +141,9 @@ public final class ActivityStatusResolver {
     }
 
     /**
-     * When an untouched plan is over. A plan with no clock time runs to the end of its
-     * day rather than to a two-hour window from midnight, since the day is all the user
-     * actually said.
+     * When an occurrence nobody started stops being upcoming: {@link #START_GRACE} after
+     * its start. A plan with no clock time gets the whole of its day instead, since the
+     * day is all the user actually said.
      * <p>
      * The end of its day is a day after its start, not midnight in the timestamp's zone.
      * The creator's zone is not stored, and a {@code timestamptz} comes back from
@@ -118,23 +153,23 @@ public final class ActivityStatusResolver {
      * (see {@code ActivityCommandHandler}), so start plus a day is that day's end
      * wherever the plan was made - an hour off only across a DST change.
      */
-    private static ZonedDateTime autoEnd(Lifecycle plan, ZonedDateTime occurrence) {
+    private static ZonedDateTime deadline(Lifecycle plan, ZonedDateTime occurrence) {
         if (!plan.hasTime()) {
             return occurrence.plusDays(1);
         }
-        return occurrence.plus(duration(plan));
+        return occurrence.plus(START_GRACE);
     }
 
     /**
-     * Which occurrence of a repeating plan {@code now} falls in - or, once the rule has
-     * run out, the last one there was.
+     * Which occurrence, from {@code first} on, {@code now} falls in - or, once the rule
+     * has run out, the last one there was.
      * <p>
-     * Without this a weekly plan would be permanently ended five minutes after its very
+     * Without this a weekly plan would be cancelled for good two hours after its very
      * first Tuesday: the row stores the rule and the first occurrence, and nothing
      * materialises the rest (see {@code V24__activity_recurrence.sql}).
      */
-    private static ZonedDateTime currentOccurrence(Lifecycle plan, ZonedDateTime now) {
-        ZonedDateTime occurrence = plan.startTime();
+    private static ZonedDateTime currentOccurrence(Lifecycle plan, ZonedDateTime now, ZonedDateTime first) {
+        ZonedDateTime occurrence = first;
         if (plan.repeatFrequency() == null) {
             return occurrence;
         }
@@ -142,11 +177,11 @@ public final class ActivityStatusResolver {
         int interval = intervalOf(plan);
 
         for (int step = 0; step < MAX_OCCURRENCE_STEPS; step++) {
-            if (now.isBefore(autoEnd(plan, occurrence))) {
+            if (now.isBefore(deadline(plan, occurrence))) {
                 return occurrence;
             }
             ZonedDateTime next = advance(occurrence, plan.repeatFrequency(), interval);
-            // Past the rule's end date there is no next one, and the plan is over for
+            // Past the rule's end date there is no next one, and the plan is done for
             // good rather than upcoming forever.
             if (plan.repeatUntil() != null && next.isAfter(plan.repeatUntil())) {
                 return occurrence;
@@ -161,9 +196,9 @@ public final class ActivityStatusResolver {
      * again: a one-off whose start has passed, or a repeat rule that has run out.
      * <p>
      * The next start, where {@link #currentOccurrence} is the occurrence covering a
-     * moment - what the start-of-plan reminder needs, since "starts in 30 minutes" is
+     * moment - what the start-of-plan reminders need, since "starts in 30 minutes" is
      * about an occurrence that hasn't begun. Says nothing about whether the host has
-     * already started or ended the plan; the caller checks that.
+     * already started, ended or cancelled the plan; the caller checks that.
      */
     public static ZonedDateTime nextStartAfter(Lifecycle plan, ZonedDateTime after) {
         ZonedDateTime occurrence = plan.startTime();

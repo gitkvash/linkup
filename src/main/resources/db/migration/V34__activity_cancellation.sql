@@ -1,0 +1,11 @@
+-- A host can cancel a plan without deleting it: it stays visible, marked cancelled, to
+-- everyone who was in it, instead of vanishing from their lists.
+--
+-- Like started_at and ended_at (V25), this records only what the host did. A plan can
+-- also read as cancelled without it: one nobody started within two hours of its start
+-- time. That is derived on every read (ActivityStatusResolver / ActivityStatusSql), not
+-- written here, for the reason V25 gives.
+--
+-- Nullable with no default and no foreign key, so existing inserts (including the raw
+-- ones in AccountDeletionIT) and app_delete_current_account() (V33) are unaffected.
+ALTER TABLE activities ADD COLUMN cancelled_at TIMESTAMPTZ;

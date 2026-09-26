@@ -55,6 +55,7 @@ class ActivityCommandHandlerEventsTest {
         activity = new Activity();
         activity.setId(activityId);
         activity.setCreatorId(creatorId);
+        activity.setStartTime(ZonedDateTime.now().plusDays(1));
         when(activities.findById(activityId)).thenReturn(Optional.of(activity));
         when(activities.save(any(Activity.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(locations.findByActivityId(activityId)).thenReturn(Optional.empty());
@@ -96,7 +97,9 @@ class ActivityCommandHandlerEventsTest {
     void aDeleteTellsEveryoneStillInThePlanButTheHost() {
         UUID joined = UUID.randomUUID();
         UUID invited = UUID.randomUUID();
-        ZonedDateTime start = ZonedDateTime.parse("2026-10-01T18:00:00+04:00[Asia/Tbilisi]");
+        // Relative, not a date: a plan whose start is over two hours gone reads as
+        // cancelled already, and deleting that one tells nobody (below).
+        ZonedDateTime start = ZonedDateTime.now().plusDays(5);
         activity.setTitle("Dinner");
         activity.setStartTime(start);
         when(participants.findUserIdsByActivityAndStatusIn(activityId, ParticipantRepository.IN_THE_PLAN))
@@ -114,6 +117,18 @@ class ActivityCommandHandlerEventsTest {
             assertThat(event.startTime()).isEqualTo(start);
             assertThat(event.participantIds()).containsExactly(joined, invited);
         });
+    }
+
+    @Test
+    void deletingAPlanThatWasAlreadyCancelledDoesNotTellAnyoneTwice() {
+        activity.setCancelledAt(ZonedDateTime.now().minusMinutes(5));
+        when(participants.findUserIdsByActivityAndStatusIn(activityId, ParticipantRepository.IN_THE_PLAN))
+                .thenReturn(List.of(creatorId, UUID.randomUUID()));
+
+        handler.handle(new DeleteActivityCommand(activityId, creatorId));
+
+        verify(events).publishEvent(any(ActivityDeletedEvent.class));
+        verify(events, never()).publishEvent(any(ActivityCancelledEvent.class));
     }
 
     @Test

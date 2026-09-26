@@ -27,7 +27,7 @@ public record MapMarkerDto(
         ActivityCategory category,
 
         /*
-         * Never ENDED: the map filters those out before clustering. A cluster reports LIVE
+         * Never ENDED or CANCELLED: the map filters those out before clustering. A cluster reports LIVE
          * when any plan in it is, which is what makes it worth zooming into.
          */
         ActivityStatus status,

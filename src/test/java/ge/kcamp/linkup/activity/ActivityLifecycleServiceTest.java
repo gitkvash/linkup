@@ -1,6 +1,7 @@
 package ge.kcamp.linkup.activity;
 
 import ge.kcamp.linkup.activity.entity.Activity;
+import ge.kcamp.linkup.activity.exception.ActivityNotVisibleException;
 import ge.kcamp.linkup.activity.repository.ActivityRepository;
 import ge.kcamp.linkup.activity.repository.ParticipantRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -14,13 +15,14 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** Starting a plan tells the people in it - once. */
+/** Starting or cancelling a plan tells the people in it - once per run. */
 class ActivityLifecycleServiceTest {
 
     private final UUID activityId = UUID.randomUUID();
@@ -64,12 +66,53 @@ class ActivityLifecycleServiceTest {
     }
 
     @Test
-    void startingAgainOrReopeningTellsNobody() {
-        activity.setStartedAt(ZonedDateTime.now().minusMinutes(10));
-        activity.setEndedAt(ZonedDateTime.now().minusMinutes(1));
+    void aDoubleTapOnALivePlanTellsNobodyAndKeepsTheFirstStart() {
+        ZonedDateTime firstStart = ZonedDateTime.now().minusMinutes(10);
+        activity.setStartedAt(firstStart);
 
         service.start(activityId, hostId);
 
+        assertThat(activity.getStartedAt()).isEqualTo(firstStart);
         verify(events, never()).publishEvent(any(Object.class));
+    }
+
+    @Test
+    void startingAPlanTheClockCancelledReopensItAsANewRun() {
+        activity.setStartTime(ZonedDateTime.now().minusHours(3));
+
+        service.start(activityId, hostId);
+
+        assertThat(activity.getStartedAt()).isAfter(ZonedDateTime.now().minusMinutes(1));
+        verify(events).publishEvent(any(ActivityStartedEvent.class));
+    }
+
+    @Test
+    void cancellingTellsEveryoneButTheHostOnce() {
+        service.cancel(activityId, hostId);
+        service.cancel(activityId, hostId);
+
+        assertThat(activity.getCancelledAt()).isNotNull();
+        ArgumentCaptor<Object> published = ArgumentCaptor.forClass(Object.class);
+        verify(events).publishEvent(published.capture());
+        assertThat(published.getValue()).isInstanceOfSatisfying(ActivityCancelledEvent.class, event -> {
+            assertThat(event.activityId()).isEqualTo(activityId);
+            assertThat(event.participantIds()).containsExactly(guest);
+        });
+    }
+
+    @Test
+    void aPlanThatAlreadyHappenedCannotBeCancelled() {
+        activity.setStartedAt(ZonedDateTime.now().minusHours(3));
+        activity.setEndedAt(ZonedDateTime.now().minusHours(2));
+
+        assertThatThrownBy(() -> service.cancel(activityId, hostId))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(activity.getCancelledAt()).isNull();
+    }
+
+    @Test
+    void someoneElsesPlanCannotBeCancelled() {
+        assertThatThrownBy(() -> service.cancel(activityId, guest))
+                .isInstanceOf(ActivityNotVisibleException.class);
     }
 }

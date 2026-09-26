@@ -35,7 +35,7 @@ public class PlaceRepository {
     /**
      * What "this week" means: starts within the next seven days. A plan already under way is
      * included (its start is in the past), as is a repeating plan whose rule hasn't run out -
-     * {@link ActivityStatusSql#NOT_ENDED} keeps those, and a weekly one does come round within
+     * {@link ActivityStatusSql#NOT_OVER} keeps those, and a weekly one does come round within
      * the window.
      */
     private static final String WINDOW = "a.start_time < now() + interval '7 days'";
@@ -55,7 +55,7 @@ public class PlaceRepository {
               AND %s
               AND %s
               AND %s
-            """.formatted(WINDOW, ActivityStatusSql.NOT_ENDED, ActivityVisibilitySql.VISIBLE_TO_VIEWER);
+            """.formatted(WINDOW, ActivityStatusSql.NOT_OVER, ActivityVisibilitySql.VISIBLE_TO_VIEWER);
 
     /**
      * A place smaller than {@code :minRadius} is left out unless it has plans this week,
@@ -82,8 +82,7 @@ public class PlaceRepository {
     private static final String PLANS_QUERY = """
             SELECT a.activity_id, a.title, a.category, a.start_time, a.has_time,
                    l.address_text,
-                   (a.started_at IS NOT NULL
-                    OR (a.has_time AND now() >= a.start_time + interval '5 minutes')) AS is_live,
+                   %s AS is_live,
                    ST_Y(l.geom_point) AS lat,
                    ST_X(l.geom_point) AS lng
             FROM places p
@@ -95,7 +94,7 @@ public class PlaceRepository {
               AND %s
             ORDER BY a.start_time, a.activity_id
             LIMIT %d
-            """.formatted(PLAN_PREDICATE, MAX_PLACE_PLANS);
+            """.formatted(ActivityStatusSql.IS_LIVE, PLAN_PREDICATE, MAX_PLACE_PLANS);
 
     private final NamedParameterJdbcTemplate jdbcTemplate;
 
@@ -160,7 +159,7 @@ public class PlaceRepository {
                 rs.getInt("plans_this_week"));
     }
 
-    // Anything over has already been filtered out by NOT_ENDED, so the only question left
+    // Anything over has already been filtered out by NOT_OVER, so the only question left
     // is whether it has begun - the same rule the map's cluster members use.
     private static MapClusterMemberDto mapPlan(ResultSet rs, int rowNum) throws SQLException {
         return new MapClusterMemberDto(

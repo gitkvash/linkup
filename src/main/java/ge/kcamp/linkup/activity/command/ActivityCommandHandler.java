@@ -2,6 +2,7 @@ package ge.kcamp.linkup.activity.command;
 
 import ge.kcamp.linkup.activity.ActivityCancelledEvent;
 import ge.kcamp.linkup.activity.ActivityDeletedEvent;
+import ge.kcamp.linkup.activity.ActivityStatusResolver;
 import ge.kcamp.linkup.activity.ActivityUpdatedEvent;
 import ge.kcamp.linkup.activity.StructuredEventSpec;
 import ge.kcamp.linkup.activity.entity.Activity;
@@ -123,12 +124,16 @@ public class ActivityCommandHandler {
      * transaction, so the feed can drop the id from the timelines it was fanned out to
      * rather than keeping it until it ages out. And {@link ActivityCancelledEvent}, for
      * the people who were in it - whose ids have to be read here, before the cascade
-     * takes their rows.
+     * takes their rows - unless it was already over or cancelled.
      */
     @Transactional
     public void handle(DeleteActivityCommand command) {
         Activity activity = requireOwned(command.activityId(), command.actorId());
-        List<UUID> participants = participantRepository
+        // Nobody is told a plan that already happened, or was already called off, is
+        // cancelled - the second would repeat what the first cancel said.
+        boolean alreadyOver = ActivityStatusResolver.resolve(
+                ActivityStatusResolver.Lifecycle.of(activity), ZonedDateTime.now()).isOver();
+        List<UUID> participants = alreadyOver ? List.of() : participantRepository
                 .findUserIdsByActivityAndStatusIn(activity.getId(), ParticipantRepository.IN_THE_PLAN)
                 .stream()
                 .filter(userId -> !userId.equals(activity.getCreatorId()))

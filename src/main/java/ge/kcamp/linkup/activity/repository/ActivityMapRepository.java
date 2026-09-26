@@ -71,8 +71,7 @@ public class ActivityMapRepository {
             WITH visible AS (
                 SELECT a.activity_id, a.title, a.activity_type, a.category,
                        a.start_time, a.has_time, l.address_text,
-                       (a.started_at IS NOT NULL
-                        OR (a.has_time AND now() >= a.start_time + interval '5 minutes')) AS is_live,
+                       %s AS is_live,
                        l.geom_point
                 FROM activities a
                 JOIN locations l ON l.activity_id = a.activity_id
@@ -96,7 +95,8 @@ public class ActivityMapRepository {
                    ST_X(geom_point) AS lng
             FROM clustered
             ORDER BY start_time, activity_id
-            """.formatted(ActivityStatusSql.NOT_ENDED, ActivityVisibilitySql.VISIBLE_TO_VIEWER, MAX_CLUSTERED_ROWS);
+            """.formatted(ActivityStatusSql.IS_LIVE, ActivityStatusSql.NOT_OVER,
+                    ActivityVisibilitySql.VISIBLE_TO_VIEWER, MAX_CLUSTERED_ROWS);
 
     private final NamedParameterJdbcTemplate jdbcTemplate;
 
@@ -155,7 +155,7 @@ public class ActivityMapRepository {
                     rs.getDouble("lng"));
         }
 
-        // Anything over has already been filtered out by ActivityStatusSql.NOT_ENDED, so
+        // Anything over has already been filtered out by ActivityStatusSql.NOT_OVER, so
         // the only question left is whether it has begun.
         ActivityStatus status() {
             return live ? ActivityStatus.LIVE : ActivityStatus.UPCOMING;
@@ -228,7 +228,7 @@ public class ActivityMapRepository {
               AND %s
             ORDER BY distance_meters, a.start_time
             LIMIT :limit
-            """.formatted(ActivityStatusSql.NOT_ENDED, ActivityVisibilitySql.VISIBLE_TO_VIEWER);
+            """.formatted(ActivityStatusSql.NOT_OVER, ActivityVisibilitySql.VISIBLE_TO_VIEWER);
 
     public List<MapSearchResultDto> searchNearby(
             String query, double focusLat, double focusLng, int limit, UUID viewerId) {

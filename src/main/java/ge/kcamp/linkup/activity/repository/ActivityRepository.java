@@ -20,15 +20,18 @@ public interface ActivityRepository extends JpaRepository<Activity, UUID> {
      * {@code ActivityStatusResolver.nextStartAfter}.
      * <p>
      * Only plans with a clock time: a date-only plan is stored at local midnight, and a
-     * reminder for it would go out at half past eleven the night before. And only plans
-     * the host hasn't started or ended, since either one ends the plan's run for good.
+     * reminder for it would go out at half past eleven the night before. Never a cancelled
+     * one; and a one-off only if the host hasn't started or ended it. A repeating plan
+     * the host started some earlier week is still a candidate for this week - the caller
+     * resolves its status and skips anything not upcoming.
      */
     @Query("""
             SELECT a FROM Activity a
             WHERE a.hasTime = true
-              AND a.startedAt IS NULL AND a.endedAt IS NULL
+              AND a.cancelledAt IS NULL
               AND a.startTime <= :to
-              AND ((a.repeatFrequency IS NULL AND a.startTime > :from)
+              AND ((a.repeatFrequency IS NULL AND a.startTime > :from
+                        AND a.startedAt IS NULL AND a.endedAt IS NULL)
                    OR (a.repeatFrequency IS NOT NULL AND (a.repeatUntil IS NULL OR a.repeatUntil > :from)))
             """)
     List<Activity> findReminderCandidates(@Param("from") ZonedDateTime from, @Param("to") ZonedDateTime to);

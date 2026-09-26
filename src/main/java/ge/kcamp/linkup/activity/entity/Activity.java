@@ -64,16 +64,20 @@ public class Activity {
     private ActivityCategory category = ActivityCategory.GENERAL;
 
     /**
-     * When the host started it, and when they ended it. Null until they do, and null on
-     * every plan that simply ran its course - the status is derived from these plus the
-     * schedule, never stored (see {@link ge.kcamp.linkup.activity.ActivityStatusResolver}).
-     * Outside the builder on purpose: a plan is always created upcoming.
+     * When the host started it, ended it, or cancelled it. Null until they do - a plan
+     * nobody started reads as cancelled without {@code cancelledAt} ever being written -
+     * because the status is derived from these plus the schedule, never stored (see
+     * {@link ge.kcamp.linkup.activity.ActivityStatusResolver}). Outside the builder on
+     * purpose: a plan is always created upcoming.
      */
     @Column(name = "started_at")
     private ZonedDateTime startedAt;
 
     @Column(name = "ended_at")
     private ZonedDateTime endedAt;
+
+    @Column(name = "cancelled_at")
+    private ZonedDateTime cancelledAt;
 
     /**
      * Null for a one-off plan, which is every plan created before this column existed.

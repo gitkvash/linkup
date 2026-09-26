@@ -42,7 +42,7 @@ public class ActivityQueryRepository {
             SELECT a.activity_id, a.creator_id, u.username AS creator_username,
                    u.display_name AS creator_display_name,
                    a.title, a.activity_type, a.visibility, a.category,
-                   a.start_time, a.end_time, a.has_time, a.started_at, a.ended_at,
+                   a.start_time, a.end_time, a.has_time, a.started_at, a.ended_at, a.cancelled_at,
                    l.address_text,
                    ST_Y(l.geom_point) AS lat, ST_X(l.geom_point) AS lng,
                    (SELECT count(*) FROM participants p
@@ -164,6 +164,7 @@ public class ActivityQueryRepository {
         String viewerStatus = rs.getString("viewer_status");
         OffsetDateTime startedAt = rs.getObject("started_at", OffsetDateTime.class);
         OffsetDateTime endedAt = rs.getObject("ended_at", OffsetDateTime.class);
+        OffsetDateTime cancelledAt = rs.getObject("cancelled_at", OffsetDateTime.class);
         ZonedDateTime startTime = rs.getObject("start_time", OffsetDateTime.class).toZonedDateTime();
         ZonedDateTime endsAt = endTime == null ? null : endTime.toZonedDateTime();
         RepeatFrequency frequency = repeatFreq == null ? null : RepeatFrequency.valueOf(repeatFreq);
@@ -199,7 +200,8 @@ public class ActivityQueryRepository {
                                 repeatInterval,
                                 repeatUntil == null ? null : repeatUntil.toZonedDateTime(),
                                 startedAt == null ? null : startedAt.toZonedDateTime(),
-                                endedAt == null ? null : endedAt.toZonedDateTime()),
+                                endedAt == null ? null : endedAt.toZonedDateTime(),
+                                cancelledAt == null ? null : cancelledAt.toZonedDateTime()),
                         ZonedDateTime.now())
         );
     }

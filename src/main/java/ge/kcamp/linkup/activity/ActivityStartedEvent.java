@@ -5,10 +5,10 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Published when a host starts their plan by hand - the first time only. Starting it
- * again is a no-op that keeps the first timestamp (see {@link ActivityLifecycleService}),
- * so a double tap doesn't tell everyone twice. A plan that starts by the clock publishes
- * nothing: its status is derived, and there is no moment at which it changes.
+ * Published when a host starts their plan - the only way a plan goes live. A double tap
+ * on a plan already running is a no-op that keeps the first timestamp (see
+ * {@link ActivityLifecycleService}), so it doesn't tell everyone twice; each fresh run
+ * does, which for a repeating plan means each occurrence the host starts.
  *
  * @param participantIds everyone joined or still invited, the host excluded - captured
  *                       here because the listener runs later, on another thread

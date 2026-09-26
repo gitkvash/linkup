@@ -91,7 +91,10 @@ public class ActivityController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
-    /** Cancel a plan. Creator only, same 404 rule as {@link #update}. */
+    /**
+     * Delete a plan for everyone. Creator only, same 404 rule as {@link #update}.
+     * {@link #cancel} is the one that keeps it visible.
+     */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable UUID id) {
         activityCommandHandler.handle(new DeleteActivityCommand(id, UserContext.getUserId()));
@@ -157,9 +160,8 @@ public class ActivityController {
     }
 
     /**
-     * The host says it has begun. Rarely needed - a plan starts by itself five minutes
-     * after its start time - so this is for the plan that began early, or the one whose
-     * host wants everyone to see it is on.
+     * The host says it has begun - the only way a plan goes live. One nobody starts is
+     * cancelled two hours after its start time (see {@code ActivityStatusResolver}).
      * <p>
      * Answers with the read model, so the client can render the new status without a
      * follow-up GET. Creator only; everyone else gets the 404 that editing gives.
@@ -178,6 +180,20 @@ public class ActivityController {
     public ResponseEntity<ActivityFeedItem> end(@PathVariable UUID id) {
         UUID actorId = UserContext.getUserId();
         activityLifecycleService.end(id, actorId);
+        return activityQueryService.findById(id, actorId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    /**
+     * The host calls it off. Unlike {@link #delete} the plan stays, reading as cancelled,
+     * so the people in it still see what happened to it. 400 once it has already
+     * happened; creator only, same 404 rule as {@link #update}.
+     */
+    @PostMapping("/{id}/cancel")
+    public ResponseEntity<ActivityFeedItem> cancel(@PathVariable UUID id) {
+        UUID actorId = UserContext.getUserId();
+        activityLifecycleService.cancel(id, actorId);
         return activityQueryService.findById(id, actorId)
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());

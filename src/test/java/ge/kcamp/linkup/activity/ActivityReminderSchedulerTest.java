@@ -29,7 +29,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** Reminders go out once per occurrence, about half an hour ahead, to the people going. */
+/**
+ * Two notices per occurrence, each once - half an hour ahead and at the start - to the
+ * people going, and only while the plan is still upcoming.
+ */
 class ActivityReminderSchedulerTest {
 
     private static final ZonedDateTime NOW = ZonedDateTime.parse("2026-10-01T14:00:00Z");
@@ -37,6 +40,7 @@ class ActivityReminderSchedulerTest {
 
     private final UUID activityId = UUID.randomUUID();
     private final UUID going = UUID.randomUUID();
+    private final UUID host = UUID.randomUUID();
 
     private ActivityRepository activities;
     private ParticipantRepository participants;
@@ -124,10 +128,53 @@ class ActivityReminderSchedulerTest {
     }
 
     @Test
+    void aPlanReachingItsStartTimeGetsAStartingNowNoticeNamingItsHost() {
+        ZonedDateTime start = NOW.minusSeconds(30);
+        Activity activity = plan(start, null);
+        when(activities.findReminderCandidates(NOW.minus(ActivityReminderScheduler.STARTING_NOW_CATCH_UP), NOW))
+                .thenReturn(List.of(activity));
+
+        scheduler.scan();
+
+        ArgumentCaptor<Object> published = ArgumentCaptor.forClass(Object.class);
+        verify(events).publishEvent(published.capture());
+        assertThat(published.getValue()).isInstanceOfSatisfying(ActivityStartingNowEvent.class, event -> {
+            assertThat(event.hostId()).isEqualTo(host);
+            assertThat(event.startTime()).isEqualTo(start);
+            assertThat(event.participantIds()).containsExactly(going);
+            assertThat(event.occurredAt()).isEqualTo(start.toInstant());
+        });
+    }
+
+    @Test
+    void theStartingNowWindowPicksUpWhereTheLastScanLeftOff() {
+        when(activities.findReminderCandidates(any(), any())).thenReturn(List.of());
+        scheduler.scan();
+
+        clock.advance(Duration.ofMinutes(1));
+        scheduler.scan();
+
+        verify(activities).findReminderCandidates(NOW, NOW.plusMinutes(1));
+    }
+
+    @Test
+    void aPlanTheHostAlreadyStartedOrCancelledGetsNoNotice() {
+        Activity started = plan(NOW.minusSeconds(30), RepeatFrequency.WEEKLY);
+        started.setStartedAt(NOW.minusMinutes(5));
+        Activity cancelled = plan(NOW.plusMinutes(20), null);
+        cancelled.setCancelledAt(NOW.minusMinutes(1));
+        when(activities.findReminderCandidates(any(), any())).thenReturn(List.of(started, cancelled));
+
+        scheduler.scan();
+
+        verify(events, never()).publishEvent(any(Object.class));
+    }
+
+    @Test
     void nextStartAfterWalksARepeatRuleAndStopsWhereItEnds() {
         ZonedDateTime first = ZonedDateTime.parse("2026-09-01T18:00:00Z");
         Lifecycle daily = new Lifecycle(first, null, true, RepeatFrequency.DAILY, 2, first.plusDays(4),
-                null, null);
+                null, null, null);
 
         assertThat(ActivityStatusResolver.nextStartAfter(daily, first.minusMinutes(1))).isEqualTo(first);
         assertThat(ActivityStatusResolver.nextStartAfter(daily, first)).isEqualTo(first.plusDays(2));
@@ -138,7 +185,7 @@ class ActivityReminderSchedulerTest {
     @Test
     void nextStartAfterIsNullForAOneOffThatHasStarted() {
         ZonedDateTime start = ZonedDateTime.parse("2026-09-01T18:00:00Z");
-        Lifecycle once = new Lifecycle(start, null, true, null, null, null, null, null);
+        Lifecycle once = new Lifecycle(start, null, true, null, null, null, null, null, null);
 
         assertThat(ActivityStatusResolver.nextStartAfter(once, start.minusSeconds(1))).isEqualTo(start);
         assertThat(ActivityStatusResolver.nextStartAfter(once, start)).isNull();
@@ -147,6 +194,7 @@ class ActivityReminderSchedulerTest {
     private Activity plan(ZonedDateTime start, RepeatFrequency repeat) {
         Activity activity = new Activity();
         activity.setId(activityId);
+        activity.setCreatorId(host);
         activity.setTitle("Run");
         activity.setStartTime(start);
         activity.setHasTime(true);

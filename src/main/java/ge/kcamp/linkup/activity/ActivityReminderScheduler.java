@@ -1,6 +1,7 @@
 package ge.kcamp.linkup.activity;
 
 import ge.kcamp.linkup.activity.entity.Activity;
+import ge.kcamp.linkup.activity.enums.ActivityStatus;
 import ge.kcamp.linkup.activity.enums.ParticipantStatus;
 import ge.kcamp.linkup.activity.repository.ActivityRepository;
 import ge.kcamp.linkup.activity.repository.ParticipantRepository;
@@ -30,25 +31,30 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Publishes {@link ActivityStartingSoonEvent} for every occurrence that starts within
- * {@code linkup.notification.reminder-lead} (30 minutes), for the people who joined it.
+ * Publishes two notices for every occurrence with a clock time, for the people who joined
+ * it: {@link ActivityStartingSoonEvent} {@code linkup.notification.reminder-lead} (30
+ * minutes) ahead, and {@link ActivityStartingNowEvent} when it reaches its start time.
+ * Only for a plan that is still upcoming - one the host already started, ended or
+ * cancelled gets neither. The second matters more than it did: a plan no longer starts
+ * by itself, so it is also the host's cue to start it.
  * <p>
- * Each scan covers the slice of time the previous one didn't: {@code (scannedUpTo,
- * now + lead]}. So a reminder goes out once, about {@code lead} ahead, rather than on
- * every scan for half an hour - and a plan created with less than {@code lead} to go gets
- * none, having just been made (its invitees were told when). The first scan after a start
- * covers everything from now on, which catches up whatever was due while the instance was
- * down or asleep. A reminder that gets picked up twice - on a restart, or by two instances
- * during a deploy - dedupes on its notification key, which is built from the occurrence's
- * start time (see the event).
+ * Each notice has its own window, and each scan covers the slice of it the previous scan
+ * didn't: {@code (scannedUpTo, now + lead]}. So a notice goes out once rather than on
+ * every scan - and a plan created with less than the lead to go gets no 30-minute one,
+ * having just been made (its invitees were told when). The first scan after a start
+ * catches up whatever was due while the instance was down or asleep, as far back as the
+ * window's {@code catchUp}: never before now for "starts in 30 minutes", a few minutes
+ * for "starting now". A notice that gets picked up twice - on a restart, or by two
+ * instances during a deploy - dedupes on its notification key, which is built from the
+ * occurrence's start time (see the events).
  * <p>
  * The scan runs on {@code applicationTaskExecutor}, so it is stamped {@code SYSTEM} like
  * every other piece of background work: it reads everyone's plans, with no user acting.
  * Its own ticker thread rather than {@code @EnableScheduling}, for the reason
  * {@code EventPublicationResubmitter} gives.
  * <p>
- * The window lives in memory, so this reminds only while an instance is running. A host
- * that sleeps when idle (Render's free tier does) sends a late reminder or none.
+ * The windows live in memory, so this notifies only while an instance is running. A host
+ * that sleeps when idle sends a late notice or none.
  */
 @Component
 class ActivityReminderScheduler {
@@ -57,18 +63,23 @@ class ActivityReminderScheduler {
 
     private static final Set<ParticipantStatus> GOING = Set.of(ParticipantStatus.JOINED);
 
+    /**
+     * How late a "starting now" may still go out. Enough to cover a scan interval and a
+     * short restart; past it the notice is stale, and the plan may well be under way.
+     */
+    static final Duration STARTING_NOW_CATCH_UP = Duration.ofMinutes(5);
+
     private final ActivityRepository activityRepository;
     private final ParticipantRepository participantRepository;
     private final ApplicationEventPublisher eventPublisher;
     private final TransactionTemplate transaction;
     private final TaskExecutor executor;
-    private final Duration lead;
+    private final Window soon;
+    private final Window startingNow;
     private final Duration interval;
     private final Clock clock;
     private final AtomicBoolean running = new AtomicBoolean();
 
-    /** Where the last scan's window ended. Written only by the one scan allowed to run. */
-    private volatile ZonedDateTime scannedUpTo;
     private ScheduledExecutorService ticker;
 
     @Autowired
@@ -98,7 +109,8 @@ class ActivityReminderScheduler {
         this.eventPublisher = eventPublisher;
         this.transaction = transaction;
         this.executor = executor;
-        this.lead = lead;
+        this.soon = new Window(lead, lead);
+        this.startingNow = new Window(Duration.ZERO, STARTING_NOW_CATCH_UP);
         this.interval = interval;
         this.clock = clock;
     }
@@ -142,43 +154,79 @@ class ActivityReminderScheduler {
     void scan() {
         try {
             ZonedDateTime now = ZonedDateTime.now(clock);
-            // Never reaching back before now: an occurrence that has already started is
-            // past reminding, however long ago the last scan was.
-            ZonedDateTime from = scannedUpTo == null || scannedUpTo.isBefore(now) ? now : scannedUpTo;
-            ZonedDateTime to = now.plus(lead);
-            if (!to.isAfter(from)) {
-                return;
-            }
-            transaction.executeWithoutResult(status -> remind(from, to));
-            scannedUpTo = to;
+            ZonedDateTime soonFrom = soon.from(now);
+            ZonedDateTime soonTo = now.plus(soon.lead);
+            ZonedDateTime nowFrom = startingNow.from(now);
+            ZonedDateTime nowTo = now.plus(startingNow.lead);
+            transaction.executeWithoutResult(status -> {
+                if (soonTo.isAfter(soonFrom)) {
+                    notify(soonFrom, soonTo, now, (activity, start, going) -> new ActivityStartingSoonEvent(
+                            activity.getId(), activity.getTitle(), start, going, start.toInstant()));
+                }
+                if (nowTo.isAfter(nowFrom)) {
+                    notify(nowFrom, nowTo, now, (activity, start, going) -> new ActivityStartingNowEvent(
+                            activity.getId(), activity.getCreatorId(), activity.getTitle(), start, going,
+                            start.toInstant()));
+                }
+            });
+            soon.scannedUpTo = soonTo;
+            startingNow.scannedUpTo = nowTo;
         } catch (RuntimeException e) {
-            // Must not kill the schedule. The window stays put, so the next scan retries it.
+            // Must not kill the schedule. The windows stay put, so the next scan retries them.
             log.warn("Activity reminder scan failed: {}", e.getMessage());
         } finally {
             running.set(false);
         }
     }
 
-    /** In a transaction, so the publications are recorded with it (Modulith's registry). */
-    private void remind(ZonedDateTime from, ZonedDateTime to) {
+    /**
+     * In a transaction, so the publications are recorded with it (Modulith's registry).
+     * Skips anything not upcoming right now: a plan already live needs no "starts soon",
+     * and one that is over or cancelled needs nothing at all.
+     */
+    private void notify(ZonedDateTime from, ZonedDateTime to, ZonedDateTime now, Notice notice) {
         for (Activity activity : activityRepository.findReminderCandidates(from, to)) {
-            ZonedDateTime start = ActivityStatusResolver.nextStartAfter(lifecycleOf(activity), from);
+            ActivityStatusResolver.Lifecycle lifecycle = ActivityStatusResolver.Lifecycle.of(activity);
+            ZonedDateTime start = ActivityStatusResolver.nextStartAfter(lifecycle, from);
             if (start == null || start.isAfter(to)) {
+                continue;
+            }
+            if (ActivityStatusResolver.resolve(lifecycle, now) != ActivityStatus.UPCOMING) {
                 continue;
             }
             List<UUID> going = participantRepository.findUserIdsByActivityAndStatusIn(activity.getId(), GOING);
             if (going.isEmpty()) {
                 continue;
             }
-            eventPublisher.publishEvent(new ActivityStartingSoonEvent(
-                    activity.getId(), activity.getTitle(), start, going, start.toInstant()));
+            eventPublisher.publishEvent(notice.of(activity, start, going));
         }
     }
 
-    private static ActivityStatusResolver.Lifecycle lifecycleOf(Activity activity) {
-        return new ActivityStatusResolver.Lifecycle(
-                activity.getStartTime(), activity.getEndTime(), activity.isHasTime(),
-                activity.getRepeatFrequency(), activity.getRepeatInterval(), activity.getRepeatUntil(),
-                activity.getStartedAt(), activity.getEndedAt());
+    @FunctionalInterface
+    private interface Notice {
+        Object of(Activity activity, ZonedDateTime start, List<UUID> going);
+    }
+
+    /**
+     * One notice's slice of the timeline: occurrences starting in {@code (from, now + lead]}.
+     * {@code catchUp} is how far behind {@code now + lead} a scan may reach - so how late
+     * the notice may be, after a gap between scans.
+     */
+    private static final class Window {
+        private final Duration lead;
+        private final Duration catchUp;
+
+        /** Where the last scan ended. Written only by the one scan allowed to run. */
+        private volatile ZonedDateTime scannedUpTo;
+
+        Window(Duration lead, Duration catchUp) {
+            this.lead = lead;
+            this.catchUp = catchUp;
+        }
+
+        ZonedDateTime from(ZonedDateTime now) {
+            ZonedDateTime floor = now.plus(lead).minus(catchUp);
+            return scannedUpTo == null || scannedUpTo.isBefore(floor) ? floor : scannedUpTo;
+        }
     }
 }

@@ -4,6 +4,7 @@ import ge.kcamp.linkup.activity.ActivityCancelledEvent;
 import ge.kcamp.linkup.activity.ActivityCreatedEvent;
 import ge.kcamp.linkup.activity.ActivityInvitationsSentEvent;
 import ge.kcamp.linkup.activity.ActivityStartedEvent;
+import ge.kcamp.linkup.activity.ActivityStartingNowEvent;
 import ge.kcamp.linkup.activity.ActivityStartingSoonEvent;
 import ge.kcamp.linkup.identity.UserDirectoryService;
 import ge.kcamp.linkup.identity.UserSummary;
@@ -65,6 +66,9 @@ public class ActivityEventListener {
             DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM);
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM);
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT);
+
+    /** How late a "starting now" may still be pushed. */
+    private static final Duration STARTING_NOW_STALE = Duration.ofMinutes(15);
 
     private final CompositeNotificationDispatcher notificationDispatcher;
     private final UserDirectoryService userDirectoryService;
@@ -180,9 +184,9 @@ public class ActivityEventListener {
     }
 
     /**
-     * The host cancelled. Still carries the activity id - the row keeps it (V27 has no
-     * foreign key for exactly this) - but the client routes this type to the plans list,
-     * since the plan itself now answers 404.
+     * The host cancelled - or deleted - the plan. Still carries the activity id - the row
+     * keeps it (V27 has no foreign key for exactly this) - but the client routes this type
+     * to the plans list, since after a delete the plan itself answers 404.
      */
     @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
     public void onActivityCancelled(ActivityCancelledEvent event) {
@@ -221,6 +225,33 @@ public class ActivityEventListener {
                     "ACTIVITY_REMINDER",
                     event.title() + " starts in " + minutes + " min",
                     "Starts at " + TIME.format(event.startTime().withZoneSameInstant(zone)) + ".",
+                    Map.of("activityId", event.activityId().toString())
+            ), event.occurredAt());
+        }
+    }
+
+    /**
+     * An occurrence has reached its start time and its host hasn't started it. The host
+     * is told what only they can do - a plan no longer starts by itself, and one nobody
+     * starts is cancelled two hours in. Dropped once it is more than a few minutes stale
+     * (a retried publication): "starting now" about something from an hour ago only
+     * misleads.
+     */
+    @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
+    public void onActivityStartingNow(ActivityStartingNowEvent event) {
+        if (Duration.between(event.startTime().toInstant(), Instant.now()).compareTo(STARTING_NOW_STALE) > 0) {
+            return;
+        }
+        String at = TIME.format(event.startTime().withZoneSameInstant(zone));
+        for (var participantId : event.participantIds()) {
+            boolean host = participantId.equals(event.hostId());
+            notificationDispatcher.dispatch(new NotificationMessage(
+                    participantId,
+                    "ACTIVITY_STARTING",
+                    event.title() + " starts now",
+                    host
+                            ? "Start it when everyone's there, or it's cancelled in two hours."
+                            : "It was planned for " + at + ".",
                     Map.of("activityId", event.activityId().toString())
             ), event.occurredAt());
         }
