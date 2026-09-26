@@ -41,6 +41,8 @@ application-local.yaml
 application-local.yml
 
 ### Credentials, Keys & Certificates ###
+# Firebase service-account key (FCM push). Lives on the server, never in git.
+fcm.json
 *.pem
 *.key
 *.p12
