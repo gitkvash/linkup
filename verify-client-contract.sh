@@ -146,6 +146,14 @@ check "a rule ending before it starts is a 400" 400 "$(code -X POST "$API/activi
   "addressText":"x","visibility":"FRIENDS","repeatFrequency":"WEEKLY","repeatUntil":"2031-03-01T15:00:00.000Z"}')"
 check "cleaning up the repeating plan" 204 "$(code -X DELETE -H "$AUTHA" "$API/activities/$RID")"
 
+# Left in place on purpose: it is the plan that fills B's feed for the "feed items
+# carry ..." checks below, once every other plan here has been deleted. Created this
+# early so fan-out has written it to B's timeline by the time the feed is read.
+FEEDPLAN=$(curl -s -X POST "$API/activities" -H "$JSON" -H "$AUTHA" -d '{
+  "title":"Coffee at Fabrika","startTime":"2031-05-01T14:00:00.000Z","hasTime":true,
+  "addressText":"Fabrika","visibility":"FRIENDS","groupId":null,"inviteeUserIds":[]}')
+has "a friends-only plan for the feed checks is created" "$FEEDPLAN" '"id"'
+
 DETAIL=$(curl -s -H "$AUTHA" "$API/activities/$AID")
 has "GET /activities/{id} carries activityId" "$DETAIL" '"activityId"'
 # Without this the detail screen's "Organiser" row can only render the raw id.
