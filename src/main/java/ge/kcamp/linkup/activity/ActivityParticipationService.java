@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -61,7 +62,9 @@ public class ActivityParticipationService {
     @Transactional
     public ParticipantStatus join(UUID activityId, UUID userId) {
         requireVisible(activityId, userId);
-        return upsert(activityId, userId, ParticipantStatus.JOINED);
+        ParticipantStatus status = upsert(activityId, userId, ParticipantStatus.JOINED);
+        eventPublisher.publishEvent(new ActivityChangedEvent(activityId, Instant.now()));
+        return status;
     }
 
     /**
@@ -79,14 +82,17 @@ public class ActivityParticipationService {
         participantRepository
                 .findByIdActivityIdAndIdUserId(activityId, userId)
                 .ifPresent(participantRepository::delete);
+        eventPublisher.publishEvent(new ActivityChangedEvent(activityId, Instant.now()));
     }
 
     /** Accept or decline an invitation. */
     @Transactional
     public ParticipantStatus respond(UUID activityId, UUID userId, boolean going) {
         requireVisible(activityId, userId);
-        return upsert(
+        ParticipantStatus status = upsert(
                 activityId, userId, going ? ParticipantStatus.JOINED : ParticipantStatus.DECLINED);
+        eventPublisher.publishEvent(new ActivityChangedEvent(activityId, Instant.now()));
+        return status;
     }
 
     /**
@@ -154,6 +160,19 @@ public class ActivityParticipationService {
                             participant.getStatus());
                 })
                 .toList();
+    }
+
+    /**
+     * Everyone with a stake in the plan: the host and whoever is joined or still invited.
+     * Read by the listener that tells them it changed, on its own thread and as the
+     * system, so it is not filtered by who is asking.
+     */
+    @Transactional(readOnly = true)
+    public Set<UUID> audienceOf(UUID activityId) {
+        Set<UUID> audience = new HashSet<>(participantRepository.findUserIdsByActivityAndStatusIn(
+                activityId, ParticipantRepository.IN_THE_PLAN));
+        activityRepository.findById(activityId).ifPresent(activity -> audience.add(activity.getCreatorId()));
+        return audience;
     }
 
     /** Activities the caller has been invited to and hasn't answered. */

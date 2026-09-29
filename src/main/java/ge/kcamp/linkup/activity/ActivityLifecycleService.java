@@ -87,6 +87,8 @@ public class ActivityLifecycleService {
         }
         activity.setEndedAt(now);
         activityRepository.save(activity);
+        // Ending notifies nobody, so this is the only way the people in the plan see it end.
+        eventPublisher.publishEvent(new ActivityChangedEvent(activityId, now.toInstant()));
     }
 
     /**

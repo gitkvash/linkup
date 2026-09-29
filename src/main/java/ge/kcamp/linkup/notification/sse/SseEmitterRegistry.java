@@ -179,6 +179,17 @@ public class SseEmitterRegistry {
         }
     }
 
+    /** Fire-and-forget, like {@link #push}, as the {@code sync} event rather than a notification. */
+    public void pushSync(UUID userId, SyncSignal signal) {
+        List<Connection> connections = emittersByUser.get(userId);
+        if (connections == null) {
+            return;
+        }
+        for (Connection connection : connections) {
+            write(userId, connection, SseEmitter.event().name("sync").data(signal), () -> {});
+        }
+    }
+
     /**
      * Ends every open stream of one user, for an account that no longer exists. The
      * streams would otherwise stay open, heartbeating, until their timeout.

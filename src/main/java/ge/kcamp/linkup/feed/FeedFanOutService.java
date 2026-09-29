@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -62,21 +63,28 @@ class FeedFanOutService {
      *                any case have it filtered back out on read by the visibility
      *                predicate, so pushing to them only buys short pages.
      */
-    void fanOutOnWrite(UUID creatorId, UUID activityId, Instant startTime, UUID groupId) {
+    Set<UUID> fanOutOnWrite(UUID creatorId, UUID activityId, Instant startTime, UUID groupId) {
         double score = FeedTimelineScore.of(activityId, startTime);
         timelineRepository.push(creatorId, activityId, score);
+        Set<UUID> reached = new HashSet<>();
+        reached.add(creatorId);
 
         if (groupId != null) {
             // No influencer exemption here: membership is bounded by whoever was added by
             // hand, so there is no write-amplification tail to protect against.
-            timelineRepository.pushAll(groupService.memberIds(groupId), activityId, score);
-            return;
+            Collection<UUID> members = groupService.memberIds(groupId);
+            timelineRepository.pushAll(members, activityId, score);
+            reached.addAll(members);
+            return reached;
         }
 
         if (isInfluencer(creatorId)) {
-            return;
+            return reached;
         }
-        timelineRepository.pushAll(socialGraphService.getAcceptedFriendIds(creatorId), activityId, score);
+        Collection<UUID> friends = socialGraphService.getAcceptedFriendIds(creatorId);
+        timelineRepository.pushAll(friends, activityId, score);
+        reached.addAll(friends);
+        return reached;
     }
 
     /**
@@ -89,16 +97,25 @@ class FeedFanOutService {
      * any read ({@code findByCreatorIn} applies it), since this runs on a listener thread
      * as SYSTEM, which RLS does not filter. An influencer's plans are skipped here as at
      * creation; the read side pulls those in.
+     *
+     * @return the sides that actually gained a plan, so only they are told to re-read
      */
-    void backfillNewFriendship(UUID userAId, UUID userBId) {
-        backfill(userAId, userBId);
-        backfill(userBId, userAId);
+    Set<UUID> backfillNewFriendship(UUID userAId, UUID userBId) {
+        Set<UUID> gained = new HashSet<>();
+        if (backfill(userAId, userBId)) {
+            gained.add(userBId);
+        }
+        if (backfill(userBId, userAId)) {
+            gained.add(userAId);
+        }
+        return gained;
     }
 
-    private void backfill(UUID creatorId, UUID friendId) {
+    private boolean backfill(UUID creatorId, UUID friendId) {
         if (isInfluencer(creatorId)) {
-            return;
+            return false;
         }
+        boolean pushed = false;
         Instant after = Instant.now().minus(BACKFILL_LOOKBACK);
         for (ActivityFeedItem item : activityQueryService.findByCreatorIn(List.of(creatorId), after, friendId)) {
             if (item.status().isOver()) {
@@ -106,7 +123,9 @@ class FeedFanOutService {
             }
             timelineRepository.push(friendId, item.activityId(),
                     FeedTimelineScore.of(item.activityId(), item.startTime().toInstant()));
+            pushed = true;
         }
+        return pushed;
     }
 
     boolean isInfluencer(UUID userId) {

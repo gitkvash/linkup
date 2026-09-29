@@ -3,8 +3,13 @@ package ge.kcamp.linkup.feed;
 import ge.kcamp.linkup.activity.ActivityCreatedEvent;
 import ge.kcamp.linkup.identity.AccountDeletedEvent;
 import ge.kcamp.linkup.social.FriendshipAcceptedEvent;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.modulith.events.ApplicationModuleListener;
 import org.springframework.stereotype.Component;
+
+import java.time.Instant;
+import java.util.Set;
+import java.util.UUID;
 
 /**
  * Independent listener on the same event {@code notification}'s ActivityEventListener
@@ -18,10 +23,15 @@ class FeedFanOutEventListener {
 
     private final FeedFanOutService feedFanOutService;
     private final RedisFeedTimelineRepository timelineRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
-    FeedFanOutEventListener(FeedFanOutService feedFanOutService, RedisFeedTimelineRepository timelineRepository) {
+    FeedFanOutEventListener(
+            FeedFanOutService feedFanOutService,
+            RedisFeedTimelineRepository timelineRepository,
+            ApplicationEventPublisher eventPublisher) {
         this.feedFanOutService = feedFanOutService;
         this.timelineRepository = timelineRepository;
+        this.eventPublisher = eventPublisher;
     }
 
     @ApplicationModuleListener
@@ -29,8 +39,12 @@ class FeedFanOutEventListener {
         // Ranked by when the activity happens, not when it was created: the feed is
         // ordered and paginated by start time, and scoring by creation instant meant
         // every cursor the client sent back pointed above the entire timeline.
-        feedFanOutService.fanOutOnWrite(
+        Set<UUID> reached = feedFanOutService.fanOutOnWrite(
                 event.creatorId(), event.activityId(), event.startTime().toInstant(), event.groupId());
+        // Published from here, after the write, and not by notification on the same
+        // ActivityCreatedEvent: the two listeners run independently, and a signal that beat
+        // the write made the client re-read a feed the plan wasn't in yet.
+        eventPublisher.publishEvent(new FeedTimelinesUpdatedEvent(reached, Instant.now()));
     }
 
     /**
@@ -39,7 +53,10 @@ class FeedFanOutEventListener {
      */
     @ApplicationModuleListener
     void onFriendshipAccepted(FriendshipAcceptedEvent event) {
-        feedFanOutService.backfillNewFriendship(event.userAId(), event.userBId());
+        Set<UUID> gained = feedFanOutService.backfillNewFriendship(event.userAId(), event.userBId());
+        if (!gained.isEmpty()) {
+            eventPublisher.publishEvent(new FeedTimelinesUpdatedEvent(gained, Instant.now()));
+        }
     }
 
     /**

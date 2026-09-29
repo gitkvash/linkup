@@ -107,6 +107,7 @@ public class SocialGraphService {
     public void declineFriendRequest(UUID declinerId, UUID requesterId) {
         Friendship friendship = requirePendingRequest(declinerId, requesterId);
         friendshipRepository.delete(friendship);
+        eventPublisher.publishEvent(new FriendRequestDeclinedEvent(requesterId, declinerId, Instant.now()));
     }
 
     /**
