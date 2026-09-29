@@ -12,6 +12,7 @@ import ge.kcamp.linkup.notification.CompositeNotificationDispatcher;
 import ge.kcamp.linkup.notification.NotificationMessage;
 import ge.kcamp.linkup.social.FriendRequestReceivedEvent;
 import ge.kcamp.linkup.social.FriendshipAcceptedEvent;
+import ge.kcamp.linkup.social.GroupMemberAddedEvent;
 import ge.kcamp.linkup.social.GroupService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.modulith.events.ApplicationModuleListener;
@@ -284,6 +285,27 @@ public class ActivityEventListener {
                 requester + " wants to be friends",
                 "Accept or decline from the People tab.",
                 Map.of("otherUserId", event.requesterId().toString())), event.occurredAt());
+    }
+
+    /**
+     * Tells someone they were put in a group. Nothing else said so: a group appeared in
+     * their list, if they happened to look, and its plans began arriving unexplained.
+     * The owner adding themselves is not news.
+     */
+    @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
+    public void onGroupMemberAdded(GroupMemberAddedEvent event) {
+        if (event.userId().equals(event.addedBy())) {
+            return;
+        }
+        String group = groupService.groupName(event.groupId()).orElse("a group");
+        notificationDispatcher.dispatch(new NotificationMessage(
+                event.userId(),
+                "GROUP_ADDED",
+                usernameOf(event.addedBy()) + " added you to " + group,
+                "Plans shared with the group will show up in your feed.",
+                Map.of("groupId", event.groupId().toString(),
+                        "otherUserId", event.addedBy().toString())
+        ), event.occurredAt());
     }
 
     @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)

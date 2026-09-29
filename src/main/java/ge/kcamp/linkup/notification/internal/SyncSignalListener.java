@@ -9,12 +9,17 @@ import ge.kcamp.linkup.notification.sse.SseEmitterRegistry;
 import ge.kcamp.linkup.notification.sse.SyncSignal;
 import ge.kcamp.linkup.social.FriendRequestDeclinedEvent;
 import ge.kcamp.linkup.social.FriendshipEndedEvent;
+import ge.kcamp.linkup.social.GroupMemberAddedEvent;
+import ge.kcamp.linkup.social.GroupMemberRemovedEvent;
+import ge.kcamp.linkup.social.GroupService;
 import org.springframework.modulith.events.ApplicationModuleListener;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -33,10 +38,15 @@ class SyncSignalListener {
 
     private final SseEmitterRegistry registry;
     private final ActivityParticipationService participationService;
+    private final GroupService groupService;
 
-    SyncSignalListener(SseEmitterRegistry registry, ActivityParticipationService participationService) {
+    SyncSignalListener(
+            SseEmitterRegistry registry,
+            ActivityParticipationService participationService,
+            GroupService groupService) {
         this.registry = registry;
         this.participationService = participationService;
+        this.groupService = groupService;
     }
 
     /** After the Redis write, so the client's re-read finds the new plan. */
@@ -70,6 +80,33 @@ class SyncSignalListener {
     @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
     void onFriendRequestDeclined(FriendRequestDeclinedEvent event) {
         signal(List.of(event.requesterId()), new SyncSignal(List.of(SyncSignal.REQUESTS), null));
+    }
+
+    /**
+     * The person added also gets the group's plans, and is told separately by a
+     * notification; the others just see the new name.
+     */
+    @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
+    void onGroupMemberAdded(GroupMemberAddedEvent event) {
+        signalGroup(event.groupId(), event.userId());
+    }
+
+    @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
+    void onGroupMemberRemoved(GroupMemberRemovedEvent event) {
+        signalGroup(event.groupId(), event.userId());
+    }
+
+    /**
+     * Everyone still in the group re-reads its members; the one it happened to, who may
+     * no longer be among them, also re-reads the feed and map its plans appear in or
+     * leave.
+     */
+    private void signalGroup(UUID groupId, UUID affectedUserId) {
+        Set<UUID> others = new HashSet<>(groupService.memberIds(groupId));
+        others.remove(affectedUserId);
+        signal(others, new SyncSignal(List.of(SyncSignal.GROUPS), null, groupId.toString()));
+        registry.pushSync(affectedUserId, new SyncSignal(
+                List.of(SyncSignal.GROUPS, SyncSignal.FEED, SyncSignal.MAP), null, groupId.toString()));
     }
 
     private void signalPlan(UUID activityId) {

@@ -128,6 +128,28 @@ class FeedFanOutService {
         return pushed;
     }
 
+    /**
+     * Gives someone just added to a group the group's plans that are still on. Fan-out
+     * happens once, when a plan is created, so without this a new member saw only the
+     * plans made after they joined. Visibility is the new member's, as in
+     * {@link #backfillNewFriendship}, and ended plans stay out.
+     *
+     * @return whether any plan was added, so the member is only told to re-read if so
+     */
+    boolean backfillGroupMember(UUID groupId, UUID userId) {
+        Instant after = Instant.now().minus(BACKFILL_LOOKBACK);
+        boolean pushed = false;
+        for (ActivityFeedItem item : activityQueryService.findByGroup(groupId, after, userId)) {
+            if (item.status().isOver()) {
+                continue;
+            }
+            timelineRepository.push(userId, item.activityId(),
+                    FeedTimelineScore.of(item.activityId(), item.startTime().toInstant()));
+            pushed = true;
+        }
+        return pushed;
+    }
+
     boolean isInfluencer(UUID userId) {
         return socialGraphService.countAcceptedFriends(userId) >= influencerThreshold;
     }

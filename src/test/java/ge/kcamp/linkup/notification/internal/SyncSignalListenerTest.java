@@ -7,11 +7,15 @@ import ge.kcamp.linkup.notification.sse.SseEmitterRegistry;
 import ge.kcamp.linkup.notification.sse.SyncSignal;
 import ge.kcamp.linkup.social.FriendRequestDeclinedEvent;
 import ge.kcamp.linkup.social.FriendshipEndedEvent;
+import ge.kcamp.linkup.social.GroupMemberAddedEvent;
+import ge.kcamp.linkup.social.GroupMemberRemovedEvent;
+import ge.kcamp.linkup.social.GroupService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -32,13 +36,15 @@ class SyncSignalListenerTest {
 
     private SseEmitterRegistry registry;
     private ActivityParticipationService participation;
+    private GroupService groups;
     private SyncSignalListener listener;
 
     @BeforeEach
     void setUp() {
         registry = mock(SseEmitterRegistry.class);
         participation = mock(ActivityParticipationService.class);
-        listener = new SyncSignalListener(registry, participation);
+        groups = mock(GroupService.class);
+        listener = new SyncSignalListener(registry, participation, groups);
     }
 
     @Test
@@ -74,6 +80,34 @@ class SyncSignalListenerTest {
         verify(registry).pushSync(eq(bob), any(SyncSignal.class));
         assertThat(sent.getValue().topics())
                 .contains(SyncSignal.FRIENDS, SyncSignal.REQUESTS, SyncSignal.FEED);
+    }
+
+    @Test
+    void aNewGroupMemberAndTheRestOfTheGroupAreToldDifferently() {
+        UUID groupId = UUID.randomUUID();
+        when(groups.memberIds(groupId)).thenReturn(List.of(alice, bob));
+
+        listener.onGroupMemberAdded(new GroupMemberAddedEvent(groupId, bob, alice, Instant.now()));
+
+        ArgumentCaptor<SyncSignal> toAlice = ArgumentCaptor.forClass(SyncSignal.class);
+        ArgumentCaptor<SyncSignal> toBob = ArgumentCaptor.forClass(SyncSignal.class);
+        verify(registry).pushSync(eq(alice), toAlice.capture());
+        verify(registry).pushSync(eq(bob), toBob.capture());
+        assertThat(toAlice.getValue().topics()).containsExactly(SyncSignal.GROUPS);
+        assertThat(toAlice.getValue().groupId()).isEqualTo(groupId.toString());
+        assertThat(toBob.getValue().topics())
+                .containsExactly(SyncSignal.GROUPS, SyncSignal.FEED, SyncSignal.MAP);
+    }
+
+    @Test
+    void someoneWhoLeftIsStillToldEvenThoughTheyAreNoLongerInTheGroup() {
+        UUID groupId = UUID.randomUUID();
+        when(groups.memberIds(groupId)).thenReturn(List.of(alice));
+
+        listener.onGroupMemberRemoved(new GroupMemberRemovedEvent(groupId, bob, Instant.now()));
+
+        verify(registry).pushSync(eq(alice), any(SyncSignal.class));
+        verify(registry).pushSync(eq(bob), any(SyncSignal.class));
     }
 
     @Test

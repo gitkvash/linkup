@@ -3,6 +3,7 @@ package ge.kcamp.linkup.feed;
 import ge.kcamp.linkup.activity.ActivityCreatedEvent;
 import ge.kcamp.linkup.identity.AccountDeletedEvent;
 import ge.kcamp.linkup.social.FriendshipAcceptedEvent;
+import ge.kcamp.linkup.social.GroupMemberAddedEvent;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.modulith.events.ApplicationModuleListener;
 import org.springframework.stereotype.Component;
@@ -56,6 +57,14 @@ class FeedFanOutEventListener {
         Set<UUID> gained = feedFanOutService.backfillNewFriendship(event.userAId(), event.userBId());
         if (!gained.isEmpty()) {
             eventPublisher.publishEvent(new FeedTimelinesUpdatedEvent(gained, Instant.now()));
+        }
+    }
+
+    /** Safe to redeliver, for the same reason. */
+    @ApplicationModuleListener
+    void onGroupMemberAdded(GroupMemberAddedEvent event) {
+        if (feedFanOutService.backfillGroupMember(event.groupId(), event.userId())) {
+            eventPublisher.publishEvent(new FeedTimelinesUpdatedEvent(Set.of(event.userId()), Instant.now()));
         }
     }
 

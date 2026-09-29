@@ -43,6 +43,11 @@ public class ActivityQueryService {
         return activityQueryRepository.findByCreatorIn(creatorIds, after, viewerId);
     }
 
+    /** A group's plans from {@code after} on, as the viewer may see them. */
+    public List<ActivityFeedItem> findByGroup(UUID groupId, Instant after, UUID viewerId) {
+        return activityQueryRepository.findByGroup(groupId, after, viewerId);
+    }
+
     /** As above, bounded above by start time; null {@code notAfter} means no bound. */
     public List<ActivityFeedItem> findByCreatorIn(
             List<UUID> creatorIds, Instant after, Instant notAfter, UUID viewerId) {

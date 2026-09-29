@@ -8,9 +8,11 @@ import ge.kcamp.linkup.social.exception.GroupMemberNotFriendException;
 import ge.kcamp.linkup.social.exception.GroupNotOwnedException;
 import ge.kcamp.linkup.social.repository.GroupMemberRepository;
 import ge.kcamp.linkup.social.repository.GroupRepository;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -24,16 +26,19 @@ public class GroupService {
     private final GroupMemberRepository groupMemberRepository;
     private final UserDirectoryService userDirectoryService;
     private final SocialGraphService socialGraphService;
+    private final ApplicationEventPublisher eventPublisher;
 
     public GroupService(
             GroupRepository groupRepository,
             GroupMemberRepository groupMemberRepository,
             UserDirectoryService userDirectoryService,
-            SocialGraphService socialGraphService) {
+            SocialGraphService socialGraphService,
+            ApplicationEventPublisher eventPublisher) {
         this.groupRepository = groupRepository;
         this.groupMemberRepository = groupMemberRepository;
         this.userDirectoryService = userDirectoryService;
         this.socialGraphService = socialGraphService;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional
@@ -74,6 +79,8 @@ public class GroupService {
         GroupMember member = new GroupMember();
         member.setId(memberId(groupId, userId));
         groupMemberRepository.save(member);
+        eventPublisher.publishEvent(
+                new GroupMemberAddedEvent(groupId, userId, requesterId, Instant.now()));
     }
 
     /**
@@ -105,6 +112,7 @@ public class GroupService {
                     "You own this group, so you can't remove yourself from it.");
         }
         groupMemberRepository.deleteByIdGroupIdAndIdUserId(groupId, userId);
+        eventPublisher.publishEvent(new GroupMemberRemovedEvent(groupId, userId, Instant.now()));
     }
 
     @Transactional(readOnly = true)

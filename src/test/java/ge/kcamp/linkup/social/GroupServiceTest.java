@@ -9,6 +9,7 @@ import ge.kcamp.linkup.social.repository.GroupMemberRepository;
 import ge.kcamp.linkup.social.repository.GroupRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.ApplicationEventPublisher;
 import org.mockito.ArgumentCaptor;
 
 import java.util.Optional;
@@ -32,6 +33,7 @@ class GroupServiceTest {
     private GroupRepository groups;
     private GroupMemberRepository members;
     private SocialGraphService socialGraph;
+    private ApplicationEventPublisher events;
     private GroupService service;
 
     @BeforeEach
@@ -39,7 +41,8 @@ class GroupServiceTest {
         groups = mock(GroupRepository.class);
         members = mock(GroupMemberRepository.class);
         socialGraph = mock(SocialGraphService.class);
-        service = new GroupService(groups, members, mock(UserDirectoryService.class), socialGraph);
+        events = mock(ApplicationEventPublisher.class);
+        service = new GroupService(groups, members, mock(UserDirectoryService.class), socialGraph, events);
 
         Group group = new Group();
         group.setId(groupId);
@@ -59,6 +62,23 @@ class GroupServiceTest {
         verify(members).save(saved.capture());
         assertThat(saved.getValue().getId().getUserId()).isEqualTo(member);
         assertThat(saved.getValue().getId().getGroupId()).isEqualTo(groupId);
+        ArgumentCaptor<Object> published = ArgumentCaptor.forClass(Object.class);
+        verify(events).publishEvent(published.capture());
+        assertThat(published.getValue()).isInstanceOfSatisfying(GroupMemberAddedEvent.class, event -> {
+            assertThat(event.groupId()).isEqualTo(groupId);
+            assertThat(event.userId()).isEqualTo(member);
+            assertThat(event.addedBy()).isEqualTo(owner);
+        });
+    }
+
+    @Test
+    void aRefusedAddPublishesNothing() {
+        when(socialGraph.isBlockedEitherWay(owner, stranger)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.addMember(owner, groupId, stranger))
+                .isInstanceOf(GroupMemberNotFriendException.class);
+
+        verify(events, never()).publishEvent(any(Object.class));
     }
 
     @Test

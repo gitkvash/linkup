@@ -145,6 +145,24 @@ public class ActivityQueryRepository {
     }
 
     /**
+     * A group's plans that start at or after {@code after}, as the viewer may see them.
+     * For giving someone who has just joined the group the plans that were made before.
+     */
+    public List<ActivityFeedItem> findByGroup(UUID groupId, Instant after, UUID viewerId) {
+        String sql = BASE_SELECT
+                + " WHERE a.group_id = :groupId AND a.start_time >= :after"
+                + " AND " + ActivityVisibilitySql.VISIBLE_TO_VIEWER
+                + " ORDER BY a.start_time DESC LIMIT " + MAX_ROWS;
+
+        Map<String, Object> params = new HashMap<>();
+        params.put("groupId", groupId);
+        params.put("after", Timestamp.from(after));
+        params.put(ActivityVisibilitySql.VIEWER_ID_PARAM, requireViewer(viewerId));
+
+        return jdbcTemplate.query(sql, params, ActivityQueryRepository::mapRow);
+    }
+
+    /**
      * A null viewer would make every visibility branch evaluate to NULL and quietly
      * return nothing, which is exactly the silent-empty-result failure mode that hid
      * the RLS problem. Fail loudly instead.
