@@ -89,10 +89,6 @@ public class IdentityService {
         this.dummyPasswordHash = passwordEncoder.encode(UUID.randomUUID().toString());
     }
 
-    public AuthResponse register(String username, String rawPassword) {
-        return register(username, rawPassword, null);
-    }
-
     /**
      * @param email where a password-reset code will go; null or blank for none
      */

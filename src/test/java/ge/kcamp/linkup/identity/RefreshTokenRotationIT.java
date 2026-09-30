@@ -41,7 +41,7 @@ class RefreshTokenRotationIT extends AbstractIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     private AuthResponse register() {
-        return identityService.register("rot_" + UUID.randomUUID().toString().substring(0, 8), "password123");
+        return identityService.register("rot_" + UUID.randomUUID().toString().substring(0, 8), "password123", null);
     }
 
     @Test
