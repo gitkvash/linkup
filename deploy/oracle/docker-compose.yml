@@ -70,8 +70,20 @@ services:
       # Certificates. Losing this volume means re-issuing, and Let's Encrypt rate-limits.
       - caddy-data:/data
       - caddy-config:/config
+      # Sites for other apps on this VM. Both directories are created by jeopard's
+      # deploy/oracle/bootstrap.sh; create them by hand (mkdir -p) if that has not run.
+      - /opt/edge/conf.d:/etc/caddy/conf.d:ro
+      - /opt/jeopard/web:/srv/jeopard-web:ro
+    networks:
+      - default
+      - edge
     depends_on:
       - app
+
+networks:
+  # Shared with jeopard's backend so this Caddy can proxy to it. `docker network create edge`.
+  edge:
+    external: true
 
 volumes:
   redis-data:

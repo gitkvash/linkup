@@ -7,3 +7,8 @@
 {$DOMAIN} {
 	reverse_proxy app:8080
 }
+
+# Other apps on this VM (jeopard) drop their own site blocks into /opt/edge/conf.d and
+# reload this Caddy; they reach it over the external `edge` network. No files there
+# means nothing is imported.
+import /etc/caddy/conf.d/*
