@@ -38,6 +38,9 @@ public final class ApiError {
     public static final String INVALID_CREDENTIALS = "INVALID_CREDENTIALS";
     public static final String USERNAME_TAKEN = "USERNAME_TAKEN";
     public static final String SESSION_EXPIRED = "SESSION_EXPIRED";
+    public static final String EMAIL_TAKEN = "EMAIL_TAKEN";
+    /** 400: every way a password reset can fail - deliberately one code, see PasswordResetService. */
+    public static final String INVALID_RESET_CODE = "INVALID_RESET_CODE";
     /** 429, always sent with {@code Retry-After}. */
     public static final String RATE_LIMITED = "RATE_LIMITED";
 

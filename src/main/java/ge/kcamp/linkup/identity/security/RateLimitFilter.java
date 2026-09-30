@@ -45,7 +45,11 @@ public class RateLimitFilter extends OncePerRequestFilter {
             post("/api/v1/auth/register"),
             post("/api/v1/auth/google"),
             post("/api/v1/auth/refresh"),
-            post("/api/v1/auth/logout"));
+            post("/api/v1/auth/logout"),
+            // Each one costs a BCrypt, and the first sends an email: they are the endpoints
+            // a stranger would hammer to guess a code or to spam an inbox.
+            post("/api/v1/auth/forgot-password"),
+            post("/api/v1/auth/reset-password"));
 
     private final boolean enabled;
     private final RateLimiter authPerIp;

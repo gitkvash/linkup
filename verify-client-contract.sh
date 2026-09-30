@@ -51,6 +51,26 @@ has "login works whatever case is typed" "$UPPER_LOGIN" '"token"'
 has "and the stored spelling is unchanged" "$UPPER_LOGIN" "\"username\":\"$A\""
 check "a wrong password is still refused" 401 "$(code -X POST "$API/auth/login" -H "$JSON" -d "{\"username\":\"$(printf '%s' "$A" | tr 'a-z' 'A-Z')\",\"password\":\"wrongpassword\"}")"
 
+echo "== identity: password reset (auth_api.dart forgotPassword/resetPassword, user_api.dart myEmail/updateMyEmail) =="
+# The code itself only ever reaches the user's inbox (or the dev log), so a black-box check
+# cannot complete a reset; what it can pin is the wire shape and that nothing leaks.
+EMAIL_A="cc_a_$STAMP@example.com"
+has "a new account has no email yet" "$(curl -s -H "$AUTHA" "$API/users/me/email")" '"email":null'
+has "PUT /users/me/email stores it lowercase" "$(curl -s -X PUT "$API/users/me/email" -H "$JSON" -H "$AUTHA" -d "{\"email\":\"CC_A_$STAMP@Example.com\"}")" "\"email\":\"$EMAIL_A\""
+check "another account cannot claim it" 409 "$(code -X PUT "$API/users/me/email" -H "$JSON" -H "$AUTHB" -d "{\"email\":\"$EMAIL_A\"}")"
+check "a malformed email is a 400" 400 "$(code -X PUT "$API/users/me/email" -H "$JSON" -H "$AUTHA" -d '{"email":"not-an-email"}')"
+check "the email endpoint needs a token" 401 "$(code "$API/users/me/email")"
+check "register with an email already taken is a 409" 409 "$(code -X POST "$API/auth/register" -H "$JSON" -d "{\"username\":\"cc_c_$STAMP\",\"password\":\"password123\",\"email\":\"$EMAIL_A\"}")"
+check "POST /auth/forgot-password for a real address" 204 "$(code -X POST "$API/auth/forgot-password" -H "$JSON" -d "{\"email\":\"$EMAIL_A\"}")"
+check "and for one nobody has - the same answer" 204 "$(code -X POST "$API/auth/forgot-password" -H "$JSON" -d '{"email":"nobody-here@example.com"}')"
+check "forgot-password with a blank email is a 400" 400 "$(code -X POST "$API/auth/forgot-password" -H "$JSON" -d '{"email":""}')"
+WRONG=$(curl -s -X POST "$API/auth/reset-password" -H "$JSON" -d "{\"email\":\"$EMAIL_A\",\"code\":\"000000\",\"newPassword\":\"newpassword123\"}")
+has "a wrong code is INVALID_RESET_CODE" "$WRONG" '"code":"INVALID_RESET_CODE"'
+check "a wrong code is a 400, not a 401 (which would sign the app out)" 400 "$(code -X POST "$API/auth/reset-password" -H "$JSON" -d "{\"email\":\"$EMAIL_A\",\"code\":\"000001\",\"newPassword\":\"newpassword123\"}")"
+has "an unknown email fails the same way" "$(curl -s -X POST "$API/auth/reset-password" -H "$JSON" -d '{"email":"nobody-here@example.com","code":"000000","newPassword":"newpassword123"}')" '"code":"INVALID_RESET_CODE"'
+check "a code that is not 6 digits is a 400" 400 "$(code -X POST "$API/auth/reset-password" -H "$JSON" -d "{\"email\":\"$EMAIL_A\",\"code\":\"12\",\"newPassword\":\"newpassword123\"}")"
+check "the old password still works after failed resets" 200 "$(code -X POST "$API/auth/login" -H "$JSON" -d "{\"username\":\"$A\",\"password\":\"password123\"}")"
+
 echo "== social: what social_api.dart calls =="
 check "POST /friends/request" 204 "$(code -X POST "$API/friends/request" -H "$JSON" -H "$AUTHA" -d "{\"targetUserId\":\"$IDB\"}")"
 REQS=$(curl -s -H "$AUTHB" "$API/friends/requests")

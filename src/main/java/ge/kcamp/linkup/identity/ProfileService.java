@@ -1,7 +1,9 @@
 package ge.kcamp.linkup.identity;
 
+import ge.kcamp.linkup.identity.dto.EmailResponse;
 import ge.kcamp.linkup.identity.dto.UpdateProfileRequest;
 import ge.kcamp.linkup.identity.entity.User;
+import ge.kcamp.linkup.identity.exception.DuplicateEmailException;
 import ge.kcamp.linkup.identity.exception.DuplicateUsernameException;
 import ge.kcamp.linkup.identity.repository.UserRepository;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -26,6 +28,40 @@ public class ProfileService {
 
     public ProfileService(UserRepository userRepository) {
         this.userRepository = userRepository;
+    }
+
+    /** The caller's own reset address. Empty only if the account no longer exists. */
+    @Transactional(readOnly = true)
+    public Optional<EmailResponse> findEmail(UUID userId) {
+        return userRepository.findById(userId).map(user -> new EmailResponse(user.getEmail()));
+    }
+
+    /**
+     * Sets the address reset codes are sent to. Kept out of {@link #update} and out of
+     * {@link UserSummary} on purpose: an email is private to its owner, and the profile
+     * shape is what every other user reads.
+     *
+     * @return the stored (normalised) address, or empty if the account no longer exists
+     * @throws DuplicateEmailException if another account already uses it
+     */
+    @Transactional
+    public Optional<EmailResponse> updateEmail(UUID userId, String email) {
+        Optional<User> found = userRepository.findById(userId);
+        if (found.isEmpty()) {
+            return Optional.empty();
+        }
+        User user = found.get();
+        String normalized = EmailAddress.normalize(email);
+        if (normalized != null && !normalized.equals(user.getEmail()) && userRepository.existsByEmail(normalized)) {
+            throw new DuplicateEmailException();
+        }
+        user.setEmail(normalized);
+        try {
+            userRepository.saveAndFlush(user);
+        } catch (DataIntegrityViolationException e) {
+            throw new DuplicateEmailException();
+        }
+        return Optional.of(new EmailResponse(normalized));
     }
 
     @Transactional

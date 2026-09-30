@@ -4,6 +4,7 @@ import ge.kcamp.linkup.identity.dto.AuthResponse;
 import ge.kcamp.linkup.identity.entity.RefreshToken;
 import ge.kcamp.linkup.identity.entity.User;
 import ge.kcamp.linkup.identity.exception.AuthenticationFailedException;
+import ge.kcamp.linkup.identity.exception.DuplicateEmailException;
 import ge.kcamp.linkup.identity.exception.DuplicateUsernameException;
 import ge.kcamp.linkup.identity.exception.SessionExpiredException;
 import ge.kcamp.linkup.identity.repository.RefreshTokenRepository;
@@ -88,23 +89,31 @@ public class IdentityService {
         this.dummyPasswordHash = passwordEncoder.encode(UUID.randomUUID().toString());
     }
 
-    @Transactional
     public AuthResponse register(String username, String rawPassword) {
-        // Checked here, with our own message: BCrypt refuses longer input with an
-        // IllegalArgumentException whose library text the error handler won't echo.
-        if (rawPassword.getBytes(StandardCharsets.UTF_8).length > MAX_PASSWORD_BYTES) {
-            throw new IllegalArgumentException("That password is too long. Please use a shorter one.");
-        }
+        return register(username, rawPassword, null);
+    }
+
+    /**
+     * @param email where a password-reset code will go; null or blank for none
+     */
+    @Transactional
+    public AuthResponse register(String username, String rawPassword, String email) {
+        requirePasswordFitsBcrypt(rawPassword);
 
         // Case-insensitively, so "Alice" cannot be registered alongside "alice" - the
         // spelling the user typed is still what gets stored and shown.
         if (userRepository.existsByUsernameIgnoringCase(username)) {
             throw new DuplicateUsernameException();
         }
+        String normalizedEmail = EmailAddress.normalize(email);
+        if (normalizedEmail != null && userRepository.existsByEmail(normalizedEmail)) {
+            throw new DuplicateEmailException();
+        }
 
         User user = new User();
         user.setUsername(username);
         user.setPasswordHash(passwordEncoder.encode(rawPassword));
+        user.setEmail(normalizedEmail);
 
         User saved;
         try {
@@ -113,10 +122,26 @@ public class IdentityService {
             // same username escape this method and become a generic 500.
             saved = userRepository.saveAndFlush(user);
         } catch (DataIntegrityViolationException e) {
+            // Two unique keys can have raced; say which one lost. Read off the constraint
+            // name, not re-queried: the transaction is already aborted on Postgres's side.
+            if (String.valueOf(e.getMostSpecificCause().getMessage()).contains("ux_users_email")) {
+                throw new DuplicateEmailException();
+            }
             throw new DuplicateUsernameException();
         }
 
         return issueToken(saved, true);
+    }
+
+    /**
+     * Checked with our own message: BCrypt refuses longer input with an
+     * IllegalArgumentException whose library text the error handler won't echo. Shared with
+     * {@link PasswordResetService}, so a reset cannot set what registration refuses.
+     */
+    static void requirePasswordFitsBcrypt(String rawPassword) {
+        if (rawPassword.getBytes(StandardCharsets.UTF_8).length > MAX_PASSWORD_BYTES) {
+            throw new IllegalArgumentException("That password is too long. Please use a shorter one.");
+        }
     }
 
     /**

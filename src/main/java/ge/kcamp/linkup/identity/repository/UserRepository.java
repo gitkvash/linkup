@@ -30,6 +30,22 @@ public interface UserRepository extends JpaRepository<User, UUID> {
 
     Optional<User> findByGoogleId(String googleId);
 
+    /** {@code email} must already be normalised (trimmed, lowercase): V37 stores it that way. */
+    Optional<User> findByEmail(String email);
+
+    boolean existsByEmail(String email);
+
+    /**
+     * Sets the password of an account with an unexpired reset code and spends the code, in
+     * one statement - see V37 for why this is a function and not an UPDATE. False if there
+     * was no live code (or the account has no password to replace).
+     * <p>
+     * A SELECT, because that is how Postgres calls a function; it writes all the same, so
+     * the caller's transaction must not be read-only.
+     */
+    @Query(value = "SELECT app_reset_password(:userId, :passwordHash)", nativeQuery = true)
+    boolean resetPassword(@Param("userId") UUID userId, @Param("passwordHash") String passwordHash);
+
     /**
      * Deletes the account this connection is stamped as ({@code app.current_user_id}) and
      * everything that belongs to it, in one statement - see V33 for what goes and why.

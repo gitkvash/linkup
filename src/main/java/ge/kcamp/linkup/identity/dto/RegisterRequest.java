@@ -1,5 +1,6 @@
 package ge.kcamp.linkup.identity.dto;
 
+import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -17,6 +18,11 @@ public record RegisterRequest(
                 regexp = "^[A-Za-z0-9._-]+$",
                 message = "A username can only contain letters, numbers, dots, dashes and underscores")
         String username,
-        @NotBlank @Size(min = 8, max = 255) String password
+        @NotBlank @Size(min = 8, max = 255) String password,
+        /**
+         * Where a password-reset code will go. Optional so a client that predates it still
+         * registers - and blank counts as absent - but an account without one cannot reset.
+         */
+        @Email @Size(max = 254) String email
 ) {
 }

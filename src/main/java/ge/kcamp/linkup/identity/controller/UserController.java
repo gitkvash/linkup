@@ -5,6 +5,8 @@ import ge.kcamp.linkup.identity.AccountDeletionService;
 import ge.kcamp.linkup.identity.ProfileService;
 import ge.kcamp.linkup.identity.UserDirectoryService;
 import ge.kcamp.linkup.identity.UserSummary;
+import ge.kcamp.linkup.identity.dto.EmailResponse;
+import ge.kcamp.linkup.identity.dto.UpdateEmailRequest;
 import ge.kcamp.linkup.identity.dto.UpdateProfileRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -14,6 +16,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -55,6 +58,25 @@ public class UserController {
     @PatchMapping("/me")
     public ResponseEntity<UserSummary> updateMe(@Valid @RequestBody UpdateProfileRequest request) {
         return profileService.update(UserContext.getUserId(), request)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    /**
+     * The address your password-reset codes go to, or null if you never gave one. Its own
+     * endpoint rather than a field of {@link UserSummary}, which every user reads.
+     */
+    @GetMapping("/me/email")
+    public ResponseEntity<EmailResponse> myEmail() {
+        return profileService.findEmail(UserContext.getUserId())
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    /** Set or change the address your password-reset codes go to. 409 if another account has it. */
+    @PutMapping("/me/email")
+    public ResponseEntity<EmailResponse> updateMyEmail(@Valid @RequestBody UpdateEmailRequest request) {
+        return profileService.updateEmail(UserContext.getUserId(), request.email())
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }

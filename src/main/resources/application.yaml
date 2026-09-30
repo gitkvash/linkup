@@ -58,6 +58,22 @@ spring:
       ssl:
         enabled: ${LINKUP_REDIS_SSL:false}
 
+  # Password-reset codes go out through this. Unset (the default) means no mail server:
+  # dev logs the code instead, anything else sends nothing - see PasswordResetMailConfig.
+  # Works with any SMTP provider (Brevo, Resend, SES, Gmail app password...); port 587 with
+  # STARTTLS is the usual setting. The timeouts keep a dead server from tying up a thread.
+  mail:
+    host: ${LINKUP_MAIL_HOST:}
+    port: ${LINKUP_MAIL_PORT:587}
+    username: ${LINKUP_MAIL_USERNAME:}
+    password: ${LINKUP_MAIL_PASSWORD:}
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.starttls.enable: true
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 5000
+      mail.smtp.writetimeout: 5000
+
   modulith:
     events:
       # Defaults to false, so the at-least-once delivery the fan-out and notification
@@ -131,6 +147,10 @@ linkup:
     timeout: ${LINKUP_SSE_TIMEOUT:PT15M}
   fcm:
     credentials-path: ${LINKUP_FCM_CREDENTIALS_PATH:}
+  mail:
+    # The From address of reset emails; falls back to LINKUP_MAIL_USERNAME. Many providers
+    # (Gmail, Brevo) insist it be an address you own.
+    from: ${LINKUP_MAIL_FROM:}
   rate-limit:
     # In-memory, per instance (one Render instance today). Buckets are keyed by client IP
     # on /auth and by username on login.

@@ -26,6 +26,20 @@ public class IdentityExceptionHandler {
         return ApiError.of(HttpStatus.CONFLICT, ex.getMessage(), ApiError.USERNAME_TAKEN);
     }
 
+    @ExceptionHandler(DuplicateEmailException.class)
+    public ResponseEntity<Map<String, Object>> handleDuplicateEmail(DuplicateEmailException ex) {
+        return ApiError.of(HttpStatus.CONFLICT, ex.getMessage(), ApiError.EMAIL_TAKEN);
+    }
+
+    /**
+     * 400, not 401: the client must not read a wrong code as an expired session - its
+     * interceptor signs out on a 401 from anywhere but the auth paths.
+     */
+    @ExceptionHandler(InvalidResetCodeException.class)
+    public ResponseEntity<Map<String, Object>> handleInvalidResetCode(InvalidResetCodeException ex) {
+        return ApiError.of(HttpStatus.BAD_REQUEST, ex.getMessage(), ApiError.INVALID_RESET_CODE);
+    }
+
     /**
      * A refused login is a 401, same as an expired token - so the body carries
      * {@code INVALID_CREDENTIALS} to tell them apart. Without it the client showed

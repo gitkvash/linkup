@@ -37,6 +37,13 @@ public class User {
     @Column(name = "google_id", unique = true)
     private String googleId;
 
+    /**
+     * Where a password-reset code goes, stored lowercase (V37). Null for every account that
+     * never gave one. Never part of {@code UserSummary}: it is private to its owner.
+     */
+    @Column(name = "email", length = 254, unique = true)
+    private String email;
+
     @Column(name = "created_at", insertable = false, updatable = false)
     private ZonedDateTime createdAt;
 }
