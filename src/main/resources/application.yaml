@@ -100,6 +100,13 @@ management:
   endpoint:
     health:
       show-details: never
+  health:
+    # Boot adds a mail indicator as soon as a JavaMailSender exists, and ours always does
+    # (spring.mail.host is defined, if empty). With no mail server configured it reports
+    # DOWN, which failed the container health check and the deploy. Mail being unreachable
+    # takes one feature (password reset) offline, not the API.
+    mail:
+      enabled: false
   tracing:
     sampling:
       probability: ${LINKUP_TRACE_SAMPLING:0.1}
