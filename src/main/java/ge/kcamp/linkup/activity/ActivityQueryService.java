@@ -5,7 +5,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -33,6 +35,15 @@ public class ActivityQueryService {
 
     public List<ActivityFeedItem> findByIds(List<UUID> activityIds, UUID viewerId) {
         return activityQueryRepository.findByIds(activityIds, viewerId);
+    }
+
+    /**
+     * Up to {@code perActivity} user ids that have JOINED each plan, creator first, for a
+     * whole page at once. Plans with nobody joined are absent. Pass ids already returned
+     * by one of the viewer-filtered reads above.
+     */
+    public Map<UUID, List<UUID>> findJoinedUserIds(Collection<UUID> activityIds, int perActivity) {
+        return activityQueryRepository.findJoinedUserIds(activityIds, perActivity);
     }
 
     public List<ActivityFeedItem> findByCreator(UUID creatorId) {

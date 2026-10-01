@@ -17,7 +17,10 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZonedDateTime;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -94,6 +97,45 @@ public class ActivityQueryRepository {
         params.put(ActivityVisibilitySql.VIEWER_ID_PARAM, requireViewer(viewerId));
 
         return jdbcTemplate.query(sql, params, ActivityQueryRepository::mapRow);
+    }
+
+    /**
+     * Up to {@code perActivity} of the people who have actually JOINED each plan - the
+     * same status {@code participant_count} counts - in one query for the whole batch.
+     * <p>
+     * Creator first, then by user id: {@code participants} records no join time, and an
+     * order that does not move between requests matters more here than which three of a
+     * crowd are shown. Plans nobody has joined are absent from the map. The caller has
+     * already vetted the ids with {@link #findByIds}; the {@code participants} RLS policy
+     * still applies to this read.
+     */
+    public Map<UUID, List<UUID>> findJoinedUserIds(Collection<UUID> activityIds, int perActivity) {
+        if (activityIds.isEmpty() || perActivity <= 0) {
+            return Map.of();
+        }
+        String sql = """
+                SELECT activity_id, user_id FROM (
+                    SELECT p.activity_id, p.user_id,
+                           row_number() OVER (
+                               PARTITION BY p.activity_id
+                               ORDER BY (p.user_id = a.creator_id) DESC, p.user_id) AS rn
+                    FROM participants p
+                    JOIN activities a ON a.activity_id = p.activity_id
+                    WHERE p.activity_id IN (:activityIds) AND p.status = 'JOINED'
+                ) ranked
+                WHERE rn <= :perActivity
+                ORDER BY activity_id, rn
+                """;
+        Map<String, Object> params = new HashMap<>();
+        params.put("activityIds", activityIds);
+        params.put("perActivity", perActivity);
+
+        Map<UUID, List<UUID>> byActivity = new LinkedHashMap<>();
+        jdbcTemplate.query(sql, params, rs -> {
+            byActivity.computeIfAbsent((UUID) rs.getObject("activity_id"), id -> new ArrayList<>())
+                    .add((UUID) rs.getObject("user_id"));
+        });
+        return byActivity;
     }
 
     /**

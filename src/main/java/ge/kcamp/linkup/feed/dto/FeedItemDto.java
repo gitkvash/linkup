@@ -6,6 +6,7 @@ import ge.kcamp.linkup.activity.enums.ActivityType;
 import ge.kcamp.linkup.activity.enums.RepeatFrequency;
 
 import java.time.ZonedDateTime;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -26,6 +27,14 @@ import java.util.UUID;
  * @param activityType    casual plan or specific event, for the same Fixed/Flexible line.
  * @param repeatFrequency set when the plan repeats; the card names the cadence.
  * @param repeatInterval  "every N", paired with {@code repeatFrequency}.
+ * @param participantCount people who have JOINED (invited and declined are not counted) -
+ *                        the same figure {@code ActivityFeedItem} carries.
+ * @param participantPreview at most three of those people, creator first, for the card's
+ *                        avatar stack. Never null; empty when nobody has joined.
+ * @param endTime         when the plan is meant to end, if it says. The live block shows its
+ *                        window and a progress bar from it; null means no end was given.
+ *                        For a repeating plan this is the first occurrence's end, like
+ *                        {@code startTime}.
  */
 public record FeedItemDto(
         UUID activityId,
@@ -39,6 +48,13 @@ public record FeedItemDto(
         boolean hasTime,
         ActivityType activityType,
         RepeatFrequency repeatFrequency,
-        Integer repeatInterval
+        Integer repeatInterval,
+        long participantCount,
+        List<Participant> participantPreview,
+        ZonedDateTime endTime
 ) {
+
+    /** One avatar in the stack: JSON keys are exactly {@code id} and {@code username}. */
+    public record Participant(UUID id, String username) {
+    }
 }

@@ -5,6 +5,7 @@ import ge.kcamp.linkup.activity.ActivityQueryService;
 import ge.kcamp.linkup.feed.dto.FeedItemDto;
 import ge.kcamp.linkup.feed.dto.FeedPageDto;
 import ge.kcamp.linkup.identity.UserDirectoryService;
+import ge.kcamp.linkup.identity.UserSummary;
 import ge.kcamp.linkup.social.SocialGraphService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,12 +20,16 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Service
 public class FeedQueryService {
 
     private static final int INFLUENCER_LOOKBACK_DAYS = 30;
     static final int MAX_LIMIT = 50;
+
+    /** Avatars the card shows; the rest is {@code participantCount}. */
+    static final int PREVIEW_SIZE = 3;
 
     /** Timeline reads per page before giving up on filling it: one Redis call and one query each. */
     private static final int MAX_TIMELINE_READS = 4;
@@ -89,12 +94,20 @@ public class FeedQueryService {
         List<ActivityFeedItem> page =
                 ordered.size() > pageSize ? ordered.subList(0, pageSize) : ordered;
 
-        // One batch lookup for the whole page rather than a query per card.
-        Map<UUID, String> creatorNames = userDirectoryService.namesFor(
-                page.stream().map(ActivityFeedItem::creatorId).distinct().toList());
+        // One batch lookup for the page's participant previews, and one for every name on
+        // it (creators and previewed participants together) rather than a query per card.
+        Map<UUID, List<UUID>> previewIds = page.isEmpty()
+                ? Map.of()
+                : activityQueryService.findJoinedUserIds(
+                        page.stream().map(ActivityFeedItem::activityId).toList(), PREVIEW_SIZE);
+        Map<UUID, UserSummary> people = userDirectoryService.findByIds(Stream.concat(
+                        page.stream().map(ActivityFeedItem::creatorId),
+                        previewIds.values().stream().flatMap(List::stream))
+                .distinct()
+                .toList());
 
         List<FeedItemDto> items = page.stream()
-                .map(item -> toDto(item, creatorNames.get(item.creatorId())))
+                .map(item -> toDto(item, people, previewIds.getOrDefault(item.activityId(), List.of())))
                 .toList();
 
         // A full page advertises the next one. A short page does too while the timeline
@@ -191,11 +204,20 @@ public class FeedQueryService {
         return FeedTimelineScore.of(item.activityId(), item.startTime().toInstant());
     }
 
-    private static FeedItemDto toDto(ActivityFeedItem item, String creatorUsername) {
+    static FeedItemDto toDto(ActivityFeedItem item, Map<UUID, UserSummary> people, List<UUID> previewIds) {
+        // The preview carries the @handle, not the display name: the client seeds each
+        // face from the handle, so a display name would draw a different avatar than
+        // the same person gets everywhere else.
+        List<FeedItemDto.Participant> preview = previewIds.stream()
+                .filter(people::containsKey)
+                .limit(PREVIEW_SIZE)
+                .map(id -> new FeedItemDto.Participant(id, people.get(id).username()))
+                .toList();
+        UserSummary creator = people.get(item.creatorId());
         return new FeedItemDto(
                 item.activityId(),
                 item.creatorId(),
-                creatorUsername,
+                creator == null ? null : creator.name(),
                 item.title(),
                 item.startTime(),
                 item.addressText(),
@@ -204,6 +226,9 @@ public class FeedQueryService {
                 item.hasTime(),
                 item.activityType(),
                 item.repeatFrequency(),
-                item.repeatInterval());
+                item.repeatInterval(),
+                item.participantCount(),
+                preview,
+                item.endTime());
     }
 }
