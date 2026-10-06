@@ -117,9 +117,9 @@ class AccountDeletionIT extends AbstractIntegrationTest {
      * V33 names every table that references {@code users}. A new one would make every
      * deletion of an account with a row in it fail on the foreign key - which is the point
      * of leaving the keys NO ACTION, but only if someone finds out before a user does.
-     * Add the table to {@code app_delete_current_account()}, then here. (refresh_tokens and
-     * password_reset_codes are the exception: ON DELETE CASCADE, V28 and V37, so the delete
-     * needs no statement for them.)
+     * Add the table to {@code app_delete_current_account()}, then here. (refresh_tokens,
+     * password_reset_codes and time_proposals are the exception: ON DELETE CASCADE, V28, V37 and
+     * V39, so the delete needs no statement for them.)
      */
     @Test
     void everyTableThatReferencesUsersIsOneTheDeleteKnowsAbout() {
@@ -132,7 +132,8 @@ class AccountDeletionIT extends AbstractIntegrationTest {
 
         assertThat(referencing).containsExactlyInAnyOrder(
                 "activities", "device_tokens", "friendships", "group_members", "groups",
-                "notifications", "participants", "password_reset_codes", "refresh_tokens");
+                "notifications", "participants", "password_reset_codes", "refresh_tokens",
+                "time_proposals");
     }
 
     private UUID group(UUID owner, UUID... members) {
