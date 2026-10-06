@@ -240,6 +240,73 @@ curl -s -o /dev/null -X POST -H "$AUTHA" "$API/activities/$CID/end"
 check "a plan that already happened cannot be cancelled" 400 "$(code -X POST -H "$AUTHA" "$API/activities/$CID/cancel")"
 check "cleaning up the cancelled plan" 204 "$(code -X DELETE -H "$AUTHA" "$API/activities/$CID")"
 
+# ActivityApi.remindActivity - the host's "Remind everyone" - and the notification an edit
+# sends. A plan of its own again. Only people who joined are reminded, a second press
+# inside the cooldown is refused, and moving the plan tells the guest what changed.
+NUDGE=$(curl -s -X POST "$API/activities" -H "$JSON" -H "$AUTHA" -d '{
+  "title":"Nudge me","startTime":"2031-03-07T18:00:00.000Z","hasTime":true,
+  "lat":null,"lng":null,"addressText":null,"visibility":"PRIVATE","inviteeUserIds":[]}')
+NID=$(jsonf "$NUDGE" id)
+check "reminding a plan nobody joined is a 400" 400 "$(code -X POST -H "$AUTHA" "$API/activities/$NID/remind")"
+curl -s -o /dev/null -X POST "$API/activities/$NID/invites" -H "$JSON" -H "$AUTHA" -d "{\"userIds\":[\"$IDB\"]}"
+curl -s -o /dev/null -X POST -H "$AUTHB" "$API/activities/$NID/respond?going=true"
+check "someone else cannot remind for your plan" 404 "$(code -X POST -H "$AUTHB" "$API/activities/$NID/remind")"
+has "POST /activities/{id}/remind answers with how many were told" "$(curl -s -X POST -H "$AUTHA" "$API/activities/$NID/remind")" '"reminded":1'
+check "a second reminder inside the cooldown is a 400" 400 "$(code -X POST -H "$AUTHA" "$API/activities/$NID/remind")"
+sleep 1
+has "the guest is reminded" "$(curl -s -H "$AUTHB" "$API/notifications")" '"ACTIVITY_REMINDER"'
+curl -s -o /dev/null -X PATCH "$API/activities/$NID" -H "$JSON" -H "$AUTHA" -d '{
+  "title":"Nudge me","startTime":"2031-03-07T19:30:00.000Z","hasTime":true,
+  "lat":null,"lng":null,"addressText":null,"visibility":"PRIVATE"}'
+sleep 1
+has "the guest is told the plan was edited" "$(curl -s -H "$AUTHB" "$API/notifications")" '"ACTIVITY_UPDATED"'
+
+# ActivityApi.proposeTime / getTimeProposals / acceptTimeProposal / declineTimeProposal /
+# withdrawTimeProposal - "suggest another time". A plan of its own. B is only invited, so
+# accepting has to do three things at once: move the plan, put B in it, and tell B.
+TP=$(curl -s -X POST "$API/activities" -H "$JSON" -H "$AUTHA" -d '{
+  "title":"Suggest me","startTime":"2031-03-08T18:00:00.000Z","hasTime":true,
+  "lat":null,"lng":null,"addressText":null,"visibility":"PRIVATE","inviteeUserIds":[]}')
+TPID=$(jsonf "$TP" id)
+curl -s -o /dev/null -X POST "$API/activities/$TPID/invites" -H "$JSON" -H "$AUTHA" -d "{\"userIds\":[\"$IDB\"]}"
+check "the host cannot suggest a time for their own plan" 400 "$(code -X POST "$API/activities/$TPID/time-proposals" -H "$JSON" -H "$AUTHA" -d '{"startTime":"2031-03-08T19:00:00.000Z"}')"
+check "a time in the past is a 400" 400 "$(code -X POST "$API/activities/$TPID/time-proposals" -H "$JSON" -H "$AUTHB" -d '{"startTime":"2001-03-08T19:00:00.000Z"}')"
+check "the time it already has is a 400" 400 "$(code -X POST "$API/activities/$TPID/time-proposals" -H "$JSON" -H "$AUTHB" -d '{"startTime":"2031-03-08T18:00:00.000Z"}')"
+check "a missing startTime is a 400" 400 "$(code -X POST "$API/activities/$TPID/time-proposals" -H "$JSON" -H "$AUTHB" -d '{}')"
+FIRST=$(curl -s -X POST "$API/activities/$TPID/time-proposals" -H "$JSON" -H "$AUTHB" -d '{"startTime":"2031-03-08T19:00:00.000Z","message":"work until 7"}')
+has "POST /activities/{id}/time-proposals records it as PENDING" "$FIRST" '"status":"PENDING"'
+has "and keeps the message" "$FIRST" 'work until 7'
+SECOND=$(curl -s -X POST "$API/activities/$TPID/time-proposals" -H "$JSON" -H "$AUTHB" -d '{"startTime":"2031-03-08T20:00:00.000Z"}')
+PID=$(jsonf "$SECOND" id)
+if [ -n "$PID" ]; then ok "suggesting again answers with the new one"; else bad "second suggestion ($SECOND)"; fi
+HOSTLIST=$(curl -s -H "$AUTHA" "$API/activities/$TPID/time-proposals")
+has "GET /activities/{id}/time-proposals: the host sees it" "$HOSTLIST" "$PID"
+case "$HOSTLIST" in *"work until 7"*) bad "the replaced suggestion is still open" ;; *) ok "the replaced suggestion is no longer open" ;; esac
+has "the proposer sees their own" "$(curl -s -H "$AUTHB" "$API/activities/$TPID/time-proposals")" "$PID"
+check "someone else cannot accept it" 404 "$(code -X POST -H "$AUTHB" "$API/activities/$TPID/time-proposals/$PID/accept")"
+check "someone else cannot decline it" 404 "$(code -X POST -H "$AUTHB" "$API/activities/$TPID/time-proposals/$PID/decline")"
+sleep 1
+has "the host is told about the suggestion" "$(curl -s -H "$AUTHA" "$API/notifications")" '"TIME_PROPOSAL"'
+has "POST .../accept answers with the moved plan" "$(curl -s -X POST -H "$AUTHA" "$API/activities/$TPID/time-proposals/$PID/accept")" '2031-03-08T20:00'
+has "the proposer is now going" "$(curl -s -H "$AUTHA" "$API/activities/$TPID/participants")" '"JOINED"'
+check "an answered suggestion cannot be accepted again" 400 "$(code -X POST -H "$AUTHA" "$API/activities/$TPID/time-proposals/$PID/accept")"
+sleep 1
+has "the proposer is told it was accepted" "$(curl -s -H "$AUTHB" "$API/notifications")" '"TIME_PROPOSAL_ACCEPTED"'
+case "$(curl -s -H "$AUTHA" "$API/activities/$TPID/time-proposals")" in "[]") ok "nothing is left open after accepting" ;; *) bad "something is still open after accepting" ;; esac
+THIRD=$(curl -s -X POST "$API/activities/$TPID/time-proposals" -H "$JSON" -H "$AUTHB" -d '{"startTime":"2031-03-08T21:00:00.000Z"}')
+P3=$(jsonf "$THIRD" id)
+check "POST .../decline" 204 "$(code -X POST -H "$AUTHA" "$API/activities/$TPID/time-proposals/$P3/decline")"
+sleep 1
+has "the proposer is told it was declined" "$(curl -s -H "$AUTHB" "$API/notifications")" '"TIME_PROPOSAL_DECLINED"'
+has "and the plan kept its time" "$(curl -s -H "$AUTHA" "$API/activities/$TPID")" '2031-03-08T20:00'
+FOURTH=$(curl -s -X POST "$API/activities/$TPID/time-proposals" -H "$JSON" -H "$AUTHB" -d '{"startTime":"2031-03-08T22:00:00.000Z"}')
+P4=$(jsonf "$FOURTH" id)
+check "the host cannot withdraw someone else's suggestion" 404 "$(code -X DELETE -H "$AUTHA" "$API/activities/$TPID/time-proposals/$P4")"
+check "DELETE /activities/{id}/time-proposals/{id} withdraws your own" 204 "$(code -X DELETE -H "$AUTHB" "$API/activities/$TPID/time-proposals/$P4")"
+case "$(curl -s -H "$AUTHA" "$API/activities/$TPID/time-proposals")" in "[]") ok "a withdrawn suggestion is no longer open" ;; *) bad "a withdrawn suggestion is still open" ;; esac
+check "cleaning up the suggestion plan" 204 "$(code -X DELETE -H "$AUTHA" "$API/activities/$TPID")"
+check "cleaning up the reminded plan" 204 "$(code -X DELETE -H "$AUTHA" "$API/activities/$NID")"
+
 # ActivityApi.startActivity / endActivity - the host's two lifecycle controls. Both
 # answer with the read model, so the detail screen re-renders without a second GET.
 STARTED=$(curl -s -X POST -H "$AUTHA" "$API/activities/$AID/start")

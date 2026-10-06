@@ -2,6 +2,7 @@ package ge.kcamp.linkup.activity.command;
 
 import ge.kcamp.linkup.activity.ActivityCancelledEvent;
 import ge.kcamp.linkup.activity.ActivityDeletedEvent;
+import ge.kcamp.linkup.activity.ActivityEditedEvent;
 import ge.kcamp.linkup.activity.ActivityStatusResolver;
 import ge.kcamp.linkup.activity.ActivityUpdatedEvent;
 import ge.kcamp.linkup.activity.StructuredEventSpec;
@@ -22,6 +23,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.time.ZonedDateTime;
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -82,6 +85,13 @@ public class ActivityCommandHandler {
         UUID audienceGroupId = activityPersistenceService.resolveGroupId(
                 command.actorId(), command.visibility(), command.groupId());
 
+        // What the people in the plan can see, before the edit overwrites it.
+        String previousTitle = activity.getTitle();
+        Schedule previousSchedule = Schedule.of(activity);
+        Location previousLocation = locationRepository.findByActivityId(activity.getId()).orElse(null);
+        String previousAddress = normalised(previousLocation == null ? null : previousLocation.getAddressText());
+        Point previousPoint = previousLocation == null ? null : previousLocation.getGeomPoint();
+
         activity.setTitle(command.title());
         activity.setStartTime(command.startTime());
         activity.setEndTime(command.endTime());
@@ -113,9 +123,114 @@ public class ActivityCommandHandler {
         Activity saved = activityRepository.save(activity);
         applyLocation(saved, command.lat(), command.lng(), command.addressText());
 
+        Instant now = Instant.now();
         eventPublisher.publishEvent(new ActivityUpdatedEvent(
-                saved.getId(), saved.getCreatorId(), saved.getStartTime(), audienceGroupId, Instant.now()));
+                saved.getId(), saved.getCreatorId(), saved.getStartTime(), audienceGroupId, now));
+
+        String address = normalised(command.addressText());
+        boolean placeChanged = !Objects.equals(previousAddress, address)
+                || movedByMoreThanAMetre(previousPoint, command.lat(), command.lng());
+        boolean titleChanged = !Objects.equals(previousTitle, saved.getTitle());
+        boolean scheduleChanged = !previousSchedule.equals(Schedule.of(saved));
+        publishEdited(saved, titleChanged ? previousTitle : null, scheduleChanged, placeChanged, address,
+                Set.of(), now);
         return saved;
+    }
+
+    /**
+     * Moves a plan to another time, for the host accepting someone's suggestion. Everything
+     * else about the plan stays as it was, which is why this is not an {@link UpdateActivityCommand}:
+     * that one is a full replacement and would need the place and rules re-sent.
+     * <p>
+     * Tells the feed and the people in the plan exactly as an edit that moves the time does.
+     * A repeating plan is refused - its start is the anchor of the whole series, and moving
+     * one occurrence is not something the schedule can express (see V24).
+     */
+    @Transactional
+    public Activity handle(RescheduleActivityCommand command) {
+        Activity activity = requireOwned(command.activityId(), command.actorId());
+        if (activity.getRepeatFrequency() != null) {
+            throw new IllegalArgumentException("A repeating plan can't be moved to a single new time.");
+        }
+        Schedule previous = Schedule.of(activity);
+        activity.setStartTime(command.startTime());
+        activity.setEndTime(command.endTime());
+        Activity saved = activityRepository.save(activity);
+
+        Instant now = Instant.now();
+        eventPublisher.publishEvent(new ActivityUpdatedEvent(
+                saved.getId(), saved.getCreatorId(), saved.getStartTime(), saved.getGroupId(), now));
+        publishEdited(saved, null, !previous.equals(Schedule.of(saved)), false, null, command.notTold(), now);
+        return saved;
+    }
+
+    /**
+     * Tells the people in the plan about an edit that changes what they'd show up for.
+     * Nothing for an edit that touches none of name, time or place - a visibility or
+     * category change is not news - nor for a plan that is over, where it would only
+     * confuse.
+     */
+    private void publishEdited(
+            Activity saved, String previousTitle, boolean scheduleChanged,
+            boolean placeChanged, String address, Set<UUID> notTold, Instant now) {
+        if (previousTitle == null && !scheduleChanged && !placeChanged) {
+            return;
+        }
+        ActivityStatusResolver.Lifecycle lifecycle = ActivityStatusResolver.Lifecycle.of(saved);
+        ZonedDateTime moment = ZonedDateTime.ofInstant(now, saved.getStartTime().getZone());
+        if (ActivityStatusResolver.resolve(lifecycle, moment).isOver()) {
+            return;
+        }
+        List<UUID> participants = participantRepository
+                .findUserIdsByActivityAndStatusIn(saved.getId(), ParticipantRepository.IN_THE_PLAN)
+                .stream()
+                .filter(userId -> !userId.equals(saved.getCreatorId()))
+                .filter(userId -> !notTold.contains(userId))
+                .toList();
+        if (participants.isEmpty()) {
+            return;
+        }
+        ZonedDateTime next = ActivityStatusResolver.nextStartAfter(lifecycle, moment);
+        eventPublisher.publishEvent(new ActivityEditedEvent(
+                saved.getId(), saved.getCreatorId(), saved.getTitle(), previousTitle,
+                scheduleChanged, next == null ? saved.getStartTime() : next, saved.isHasTime(),
+                placeChanged, address, participants, now));
+    }
+
+    /** Blank and absent are the same place: none. */
+    private static String normalised(String text) {
+        return text == null || text.isBlank() ? null : text.strip();
+    }
+
+    /** About a metre of latitude in degrees; below that a pin has not meaningfully moved. */
+    private static final double PIN_EPSILON = 0.00001;
+
+    private static boolean movedByMoreThanAMetre(Point previous, Double lat, Double lng) {
+        boolean hasNew = lat != null && lng != null;
+        if (previous == null || !hasNew) {
+            return (previous == null) != !hasNew;
+        }
+        return Math.abs(previous.getY() - lat) > PIN_EPSILON || Math.abs(previous.getX() - lng) > PIN_EPSILON;
+    }
+
+    /**
+     * The parts of an edit that change when the plan happens, compared as instants so a
+     * client re-sending the same moment in another offset is not a change.
+     */
+    private record Schedule(
+            Instant start, Instant end, boolean hasTime,
+            Object repeatFrequency, Integer repeatInterval, Instant repeatUntil) {
+
+        static Schedule of(Activity activity) {
+            return new Schedule(
+                    instant(activity.getStartTime()), instant(activity.getEndTime()), activity.isHasTime(),
+                    activity.getRepeatFrequency(), activity.getRepeatInterval(),
+                    instant(activity.getRepeatUntil()));
+        }
+
+        private static Instant instant(ZonedDateTime value) {
+            return value == null ? null : value.toInstant();
+        }
     }
 
     /**

@@ -3,6 +3,8 @@ package ge.kcamp.linkup.activity.controller;
 import ge.kcamp.linkup.activity.ActivityFeedItem;
 import ge.kcamp.linkup.activity.ActivityParticipant;
 import ge.kcamp.linkup.activity.ActivityParticipationService;
+import ge.kcamp.linkup.activity.ActivityTimeProposal;
+import ge.kcamp.linkup.activity.ActivityTimeProposalService;
 import ge.kcamp.linkup.activity.ActivityLifecycleService;
 import ge.kcamp.linkup.activity.ActivityQueryService;
 import ge.kcamp.linkup.activity.command.ActivityCommandHandler;
@@ -12,6 +14,7 @@ import ge.kcamp.linkup.activity.command.UpdateActivityCommand;
 import ge.kcamp.linkup.activity.dto.CreateStructuredActivityRequest;
 import ge.kcamp.linkup.activity.dto.InviteRequest;
 import ge.kcamp.linkup.activity.dto.ParticipationDto;
+import ge.kcamp.linkup.activity.dto.TimeProposalRequest;
 import ge.kcamp.linkup.activity.dto.UpdateActivityRequest;
 import ge.kcamp.linkup.activity.entity.Activity;
 import ge.kcamp.linkup.UserContext;
@@ -22,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -32,16 +36,19 @@ public class ActivityController {
     private final ActivityQueryService activityQueryService;
     private final ActivityParticipationService participationService;
     private final ActivityLifecycleService activityLifecycleService;
+    private final ActivityTimeProposalService timeProposalService;
 
     public ActivityController(
             ActivityCommandHandler activityCommandHandler,
             ActivityQueryService activityQueryService,
             ActivityParticipationService participationService,
-            ActivityLifecycleService activityLifecycleService) {
+            ActivityLifecycleService activityLifecycleService,
+            ActivityTimeProposalService timeProposalService) {
         this.activityCommandHandler = activityCommandHandler;
         this.activityQueryService = activityQueryService;
         this.participationService = participationService;
         this.activityLifecycleService = activityLifecycleService;
+        this.timeProposalService = timeProposalService;
     }
 
     @PostMapping
@@ -139,6 +146,52 @@ public class ActivityController {
                 participationService.invite(id, UserContext.getUserId(), request.userIds()));
     }
 
+    /**
+     * Suggest another time for a plan you have a place in (invited, going or declined). The
+     * host is told and answers with accept or decline; accepting moves the plan and puts you
+     * in it. Suggesting again replaces your open one. 400 for a plan that has started, is
+     * over or repeats, and for a time that has passed; 404 if you have no place in it.
+     */
+    @PostMapping("/{id}/time-proposals")
+    public ResponseEntity<ActivityTimeProposal> proposeTime(
+            @PathVariable UUID id, @Valid @RequestBody TimeProposalRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(timeProposalService.propose(
+                id, UserContext.getUserId(), request.startTime(), request.endTime(), request.message()));
+    }
+
+    /** Open suggestions: every one for the host, only your own for anyone else. */
+    @GetMapping("/{id}/time-proposals")
+    public ResponseEntity<List<ActivityTimeProposal>> getTimeProposals(@PathVariable UUID id) {
+        return ResponseEntity.ok(timeProposalService.listOpen(id, UserContext.getUserId()));
+    }
+
+    /** Host only: moves the plan to the suggested time and puts the proposer in it. */
+    @PostMapping("/{id}/time-proposals/{proposalId}/accept")
+    public ResponseEntity<ActivityFeedItem> acceptTimeProposal(
+            @PathVariable UUID id, @PathVariable UUID proposalId) {
+        UUID actorId = UserContext.getUserId();
+        timeProposalService.accept(id, actorId, proposalId);
+        return activityQueryService.findById(id, actorId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    /** Host only: the plan stays as it was and the proposer is told. */
+    @PostMapping("/{id}/time-proposals/{proposalId}/decline")
+    public ResponseEntity<Void> declineTimeProposal(
+            @PathVariable UUID id, @PathVariable UUID proposalId) {
+        timeProposalService.decline(id, UserContext.getUserId(), proposalId);
+        return ResponseEntity.noContent().build();
+    }
+
+    /** The proposer takes their own suggestion back. Idempotent. */
+    @DeleteMapping("/{id}/time-proposals/{proposalId}")
+    public ResponseEntity<Void> withdrawTimeProposal(
+            @PathVariable UUID id, @PathVariable UUID proposalId) {
+        timeProposalService.withdraw(id, UserContext.getUserId(), proposalId);
+        return ResponseEntity.noContent().build();
+    }
+
     /** Idempotent: joining something you're already in is a no-op, not an error. */
     @PostMapping("/{id}/join")
     public ResponseEntity<ParticipationDto> join(@PathVariable UUID id) {
@@ -190,6 +243,17 @@ public class ActivityController {
         return activityQueryService.findById(id, actorId)
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    /**
+     * The host nudges everyone who joined: "Remind everyone" on the detail screen. Answers
+     * with how many people were told. Creator only (404 otherwise); 400 when the plan is
+     * over, nobody has joined, or the last nudge was too recent.
+     */
+    @PostMapping("/{id}/remind")
+    public ResponseEntity<Map<String, Integer>> remind(@PathVariable UUID id) {
+        int reminded = activityLifecycleService.remind(id, UserContext.getUserId());
+        return ResponseEntity.ok(Map.of("reminded", reminded));
     }
 
     /**

@@ -2,10 +2,14 @@ package ge.kcamp.linkup.notification.internal;
 
 import ge.kcamp.linkup.activity.ActivityCancelledEvent;
 import ge.kcamp.linkup.activity.ActivityCreatedEvent;
+import ge.kcamp.linkup.activity.ActivityEditedEvent;
 import ge.kcamp.linkup.activity.ActivityInvitationsSentEvent;
+import ge.kcamp.linkup.activity.ActivityRemindedEvent;
 import ge.kcamp.linkup.activity.ActivityStartedEvent;
 import ge.kcamp.linkup.activity.ActivityStartingNowEvent;
 import ge.kcamp.linkup.activity.ActivityStartingSoonEvent;
+import ge.kcamp.linkup.activity.ActivityTimeProposalAnsweredEvent;
+import ge.kcamp.linkup.activity.ActivityTimeProposedEvent;
 import ge.kcamp.linkup.identity.UserDirectoryService;
 import ge.kcamp.linkup.identity.UserSummary;
 import ge.kcamp.linkup.notification.CompositeNotificationDispatcher;
@@ -25,6 +29,7 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.FormatStyle;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -232,6 +237,64 @@ public class ActivityEventListener {
     }
 
     /**
+     * The host edited the name, time or place of a plan the recipients are in. Says what
+     * changed rather than "updated", since the whole point is whether they need to change
+     * their plans. Type {@code ACTIVITY_UPDATED}, which the client already styles.
+     */
+    @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
+    public void onActivityEdited(ActivityEditedEvent event) {
+        String host = usernameOf(event.hostId());
+        List<String> changes = new ArrayList<>();
+        if (event.scheduleChanged()) {
+            changes.add("Now " + (event.hasTime()
+                    ? formatWhen(event.startTime())
+                    : DAY.format(event.startTime().withZoneSameInstant(zone))));
+        }
+        if (event.placeChanged()) {
+            changes.add(event.addressText() == null ? "No place set" : "Now at " + event.addressText());
+        }
+        if (event.previousTitle() != null) {
+            changes.add("Was “" + event.previousTitle() + "”");
+        }
+        String body = String.join(" · ", changes);
+        for (var participantId : event.participantIds()) {
+            notificationDispatcher.dispatch(new NotificationMessage(
+                    participantId,
+                    "ACTIVITY_UPDATED",
+                    host + " updated " + event.title(),
+                    body,
+                    Map.of("activityId", event.activityId().toString(),
+                            "otherUserId", event.hostId().toString())
+            ), event.occurredAt());
+        }
+    }
+
+    /**
+     * The host's manual nudge. Same type as the automatic "starts in 30 minutes" notice
+     * so the client shows it the same way, but names the host and doesn't count minutes:
+     * it can go out a day ahead.
+     */
+    @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
+    public void onActivityReminded(ActivityRemindedEvent event) {
+        String host = usernameOf(event.hostId());
+        String body = event.live()
+                ? "It's happening now."
+                : "Starts " + (event.hasTime()
+                        ? formatWhen(event.startTime())
+                        : DAY.format(event.startTime().withZoneSameInstant(zone)));
+        for (var participantId : event.participantIds()) {
+            notificationDispatcher.dispatch(new NotificationMessage(
+                    participantId,
+                    "ACTIVITY_REMINDER",
+                    host + " reminded you: " + event.title(),
+                    body,
+                    Map.of("activityId", event.activityId().toString(),
+                            "otherUserId", event.hostId().toString())
+            ), event.occurredAt());
+        }
+    }
+
+    /**
      * An occurrence has reached its start time and its host hasn't started it. The host
      * is told what only they can do - a plan no longer starts by itself, and one nobody
      * starts is cancelled two hours in. Dropped once it is more than a few minutes stale
@@ -256,6 +319,52 @@ public class ActivityEventListener {
                     Map.of("activityId", event.activityId().toString())
             ), event.occurredAt());
         }
+    }
+
+    /**
+     * Someone suggested another time, for the host. Says both times: "is this worth a
+     * look?" is answered by seeing what it would replace, and the message, if there is one,
+     * is the reason.
+     */
+    @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
+    public void onTimeProposed(ActivityTimeProposedEvent event) {
+        String proposer = usernameOf(event.proposerId());
+        String body = whenOf(event.proposedStart(), event.hasTime()) + " instead of "
+                + whenOf(event.currentStart(), event.hasTime())
+                + (event.message() == null ? "" : " · “" + event.message() + "”");
+        notificationDispatcher.dispatch(new NotificationMessage(
+                event.hostId(),
+                "TIME_PROPOSAL",
+                proposer + " suggested a new time for " + event.title(),
+                body,
+                Map.of("activityId", event.activityId().toString(),
+                        "otherUserId", event.proposerId().toString())
+        ), event.occurredAt());
+    }
+
+    /** The host answered a suggestion, for whoever made it. */
+    @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
+    public void onTimeProposalAnswered(ActivityTimeProposalAnsweredEvent event) {
+        String host = usernameOf(event.hostId());
+        String type = event.accepted() ? "TIME_PROPOSAL_ACCEPTED" : "TIME_PROPOSAL_DECLINED";
+        String title = event.accepted()
+                ? host + " accepted your time for " + event.title()
+                : host + " kept the original time for " + event.title();
+        String body = event.accepted()
+                ? "Now " + whenOf(event.startTime(), event.hasTime()) + ". You're in."
+                : "Your suggestion of " + whenOf(event.startTime(), event.hasTime()) + " wasn't taken.";
+        notificationDispatcher.dispatch(new NotificationMessage(
+                event.proposerId(),
+                type,
+                title,
+                body,
+                Map.of("activityId", event.activityId().toString(),
+                        "otherUserId", event.hostId().toString())
+        ), event.occurredAt());
+    }
+
+    private String whenOf(ZonedDateTime time, boolean hasTime) {
+        return hasTime ? formatWhen(time) : DAY.format(time.withZoneSameInstant(zone));
     }
 
     private String usernameOf(UUID userId) {

@@ -79,6 +79,10 @@ public class Activity {
     @Column(name = "cancelled_at")
     private ZonedDateTime cancelledAt;
 
+    /** When the host last pressed "Remind everyone". Null if they never have. */
+    @Column(name = "reminded_at")
+    private ZonedDateTime remindedAt;
+
     /**
      * Null for a one-off plan, which is every plan created before this column existed.
      * When set, the plan repeats every {@link #repeatInterval} of this unit from

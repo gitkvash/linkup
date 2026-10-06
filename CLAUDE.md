@@ -56,6 +56,15 @@ Only top-level classes are a module's API. The root package holds shared infrast
 - Reads go through `ActivityQueryRepository`/`ActivityQueryService` and `ActivityMapRepository`.
   The map clusters with PostGIS `ST_ClusterDBSCAN`.
 
+## Time suggestions
+
+`ActivityTimeProposalService` (table `time_proposals`, V39) lets anyone with a `participants` row
+suggest another start for a one-off, upcoming plan; the host accepts or declines. Accepting
+reschedules through `ActivityCommandHandler.handle(RescheduleActivityCommand)` (feed re-score and
+the "plan updated" notice, minus the proposer), sets the proposer `JOINED`, and retires the other
+open suggestions. Repeating plans are refused: moving the anchor moves the whole series. Rows are
+never deleted by the app (no `DELETE` grant); only `status` changes.
+
 ## Events
 
 Cross-module reactions (activity created → notification, friendship accepted → feed) use Spring
