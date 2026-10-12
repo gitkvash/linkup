@@ -1,5 +1,6 @@
 package ge.kcamp.linkup.activity;
 
+import ge.kcamp.linkup.activity.dto.CancelRequest;
 import ge.kcamp.linkup.activity.entity.Activity;
 import ge.kcamp.linkup.activity.enums.ActivityStatus;
 import ge.kcamp.linkup.activity.enums.ParticipantStatus;
@@ -104,9 +105,13 @@ public class ActivityLifecycleService {
      * <p>
      * A repeating plan is cancelled as a whole, not one occurrence of it: occurrences
      * aren't rows (see {@code V24}), so there is nothing smaller to cancel.
+     * <p>
+     * The host may say why ({@code reason}, blank counts as none), which travels in the
+     * notification to everyone in the plan. It is not stored on the plan: a cancel that was
+     * already done stays as it was, so a repeat with a different reason tells nobody.
      */
     @Transactional
-    public void cancel(UUID activityId, UUID actorId) {
+    public void cancel(UUID activityId, UUID actorId, String reason) {
         Activity activity = requireOwn(activityId, actorId);
         if (activity.getCancelledAt() != null) {
             return;
@@ -115,6 +120,11 @@ public class ActivityLifecycleService {
         if (statusOf(activity, now) == ActivityStatus.ENDED) {
             throw new IllegalArgumentException("This plan has already happened, so it can't be cancelled.");
         }
+        String trimmed = reason == null ? "" : reason.strip();
+        if (trimmed.length() > CancelRequest.MAX_REASON) {
+            throw new IllegalArgumentException(
+                    "Keep the reason under " + CancelRequest.MAX_REASON + " characters.");
+        }
         activity.setCancelledAt(now);
         activityRepository.save(activity);
 
@@ -122,7 +132,7 @@ public class ActivityLifecycleService {
         if (!participants.isEmpty()) {
             eventPublisher.publishEvent(new ActivityCancelledEvent(
                     activityId, actorId, activity.getTitle(), activity.getStartTime(),
-                    activity.isHasTime(), participants, now.toInstant()));
+                    activity.isHasTime(), participants, trimmed.isEmpty() ? null : trimmed, now.toInstant()));
         }
     }
 

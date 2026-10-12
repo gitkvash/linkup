@@ -11,6 +11,7 @@ import ge.kcamp.linkup.activity.command.ActivityCommandHandler;
 import ge.kcamp.linkup.activity.command.CreateStructuredActivityCommand;
 import ge.kcamp.linkup.activity.command.DeleteActivityCommand;
 import ge.kcamp.linkup.activity.command.UpdateActivityCommand;
+import ge.kcamp.linkup.activity.dto.CancelRequest;
 import ge.kcamp.linkup.activity.dto.CreateStructuredActivityRequest;
 import ge.kcamp.linkup.activity.dto.InviteRequest;
 import ge.kcamp.linkup.activity.dto.ParticipationDto;
@@ -265,13 +266,15 @@ public class ActivityController {
     /**
      * The host calls it off. Unlike {@link #delete} the plan stays, reading as cancelled,
      * so the people in it still see what happened to it. 400 once it has already
-     * happened; creator only, same 404 rule as {@link #update}.
+     * happened; creator only, same 404 rule as {@link #update}. The body is optional: a
+     * {@code reason} is passed on to everyone in the plan.
      */
     @Transactional
     @PostMapping("/{id}/cancel")
-    public ResponseEntity<ActivityFeedItem> cancel(@PathVariable UUID id) {
+    public ResponseEntity<ActivityFeedItem> cancel(
+            @PathVariable UUID id, @Valid @RequestBody(required = false) CancelRequest request) {
         UUID actorId = UserContext.getUserId();
-        activityLifecycleService.cancel(id, actorId);
+        activityLifecycleService.cancel(id, actorId, request == null ? null : request.reason());
         return activityQueryService.findById(id, actorId)
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());

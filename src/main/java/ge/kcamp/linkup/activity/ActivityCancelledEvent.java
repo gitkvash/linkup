@@ -19,6 +19,8 @@ import java.util.UUID;
  * is derived, and there is no moment at which it changes.
  *
  * @param participantIds everyone joined or still invited, the host excluded
+ * @param reason what the host said about why, trimmed, or null when they gave none (and always
+ *               null for a delete, which has no place to say it)
  */
 public record ActivityCancelledEvent(
         UUID activityId,
@@ -27,6 +29,7 @@ public record ActivityCancelledEvent(
         ZonedDateTime startTime,
         boolean hasTime,
         List<UUID> participantIds,
+        String reason,
         Instant occurredAt
 ) {
 }

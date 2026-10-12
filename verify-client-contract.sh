@@ -236,11 +236,15 @@ CID=$(jsonf "$CANCELME" id)
 curl -s -o /dev/null -X POST "$API/activities/$CID/invites" -H "$JSON" -H "$AUTHA" -d "{\"userIds\":[\"$IDB\"]}"
 curl -s -o /dev/null -X POST -H "$AUTHB" "$API/activities/$CID/respond?going=true"
 check "someone else cannot cancel your plan" 404 "$(code -X POST -H "$AUTHB" "$API/activities/$CID/cancel")"
-has "POST /activities/{id}/cancel cancels it" "$(curl -s -X POST -H "$AUTHA" "$API/activities/$CID/cancel")" '"status":"CANCELLED"'
+# The client always sends a JSON body ({} or {"reason": ...}); a bodiless call is the older shape
+# and keeps working. The reason is told to everyone in the plan, capped at 200.
+check "a cancel reason over 200 characters is a 400" 400 "$(code -X POST -H "$AUTHA" -H "$JSON" "$API/activities/$CID/cancel" -d "{\"reason\":\"$(head -c 201 /dev/zero | tr '\0' x)\"}")"
+has "POST /activities/{id}/cancel cancels it, with a reason" "$(curl -s -X POST -H "$AUTHA" -H "$JSON" "$API/activities/$CID/cancel" -d '{"reason":"Venue is closed"}')" '"status":"CANCELLED"'
 check "cancelling it again is a no-op" 200 "$(code -X POST -H "$AUTHA" "$API/activities/$CID/cancel")"
 has "a guest still sees the cancelled plan" "$(curl -s -H "$AUTHB" "$API/activities/$CID")" '"status":"CANCELLED"'
 sleep 1
 has "the guest is told it was cancelled" "$(curl -s -H "$AUTHB" "$API/notifications")" '"ACTIVITY_CANCELLED"'
+has "and told why" "$(curl -s -H "$AUTHB" "$API/notifications")" 'Venue is closed'
 # Ending it records that it happened; a plan that happened can't be called off after.
 curl -s -o /dev/null -X POST -H "$AUTHA" "$API/activities/$CID/end"
 check "a plan that already happened cannot be cancelled" 400 "$(code -X POST -H "$AUTHA" "$API/activities/$CID/cancel")"

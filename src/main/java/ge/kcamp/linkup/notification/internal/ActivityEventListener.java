@@ -201,12 +201,17 @@ public class ActivityEventListener {
         String when = event.hasTime()
                 ? formatWhen(event.startTime())
                 : DAY.format(event.startTime().withZoneSameInstant(zone));
+        // The reason, when there is one, is what the person wants to read; when it is
+        // missing the body says what was planned, as it always did.
+        String body = event.reason() == null
+                ? "It was planned for " + when + "."
+                : "Reason: “" + event.reason() + "”";
         for (var participantId : event.participantIds()) {
             notificationDispatcher.dispatch(new NotificationMessage(
                     participantId,
                     "ACTIVITY_CANCELLED",
                     host + " cancelled " + event.title(),
-                    "It was planned for " + when + ".",
+                    body,
                     Map.of("activityId", event.activityId().toString(),
                             "otherUserId", event.hostId().toString())
             ), event.occurredAt());

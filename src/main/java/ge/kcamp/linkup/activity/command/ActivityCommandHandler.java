@@ -260,7 +260,7 @@ public class ActivityCommandHandler {
         if (!participants.isEmpty()) {
             eventPublisher.publishEvent(new ActivityCancelledEvent(
                     activity.getId(), activity.getCreatorId(), activity.getTitle(),
-                    activity.getStartTime(), activity.isHasTime(), participants, now));
+                    activity.getStartTime(), activity.isHasTime(), participants, null, now));
         }
     }
 

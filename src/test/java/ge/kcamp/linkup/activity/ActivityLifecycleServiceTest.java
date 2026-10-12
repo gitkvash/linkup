@@ -1,5 +1,6 @@
 package ge.kcamp.linkup.activity;
 
+import ge.kcamp.linkup.activity.dto.CancelRequest;
 import ge.kcamp.linkup.activity.entity.Activity;
 import ge.kcamp.linkup.activity.enums.ParticipantStatus;
 import ge.kcamp.linkup.activity.exception.ActivityNotVisibleException;
@@ -91,8 +92,8 @@ class ActivityLifecycleServiceTest {
 
     @Test
     void cancellingTellsEveryoneButTheHostOnce() {
-        service.cancel(activityId, hostId);
-        service.cancel(activityId, hostId);
+        service.cancel(activityId, hostId, null);
+        service.cancel(activityId, hostId, null);
 
         assertThat(activity.getCancelledAt()).isNotNull();
         ArgumentCaptor<Object> published = ArgumentCaptor.forClass(Object.class);
@@ -104,18 +105,48 @@ class ActivityLifecycleServiceTest {
     }
 
     @Test
+    void theHostsReasonTravelsWithTheCancellationTrimmed() {
+        service.cancel(activityId, hostId, "  Venue is closed  ");
+
+        ArgumentCaptor<Object> published = ArgumentCaptor.forClass(Object.class);
+        verify(events).publishEvent(published.capture());
+        assertThat(published.getValue()).isInstanceOfSatisfying(
+                ActivityCancelledEvent.class, event -> assertThat(event.reason()).isEqualTo("Venue is closed"));
+    }
+
+    @Test
+    void aBlankReasonIsNoReason() {
+        service.cancel(activityId, hostId, "   ");
+
+        ArgumentCaptor<Object> published = ArgumentCaptor.forClass(Object.class);
+        verify(events).publishEvent(published.capture());
+        assertThat(published.getValue()).isInstanceOfSatisfying(
+                ActivityCancelledEvent.class, event -> assertThat(event.reason()).isNull());
+    }
+
+    @Test
+    void aReasonOverTheLimitIsRefusedAndNothingIsCancelled() {
+        String tooLong = "x".repeat(CancelRequest.MAX_REASON + 1);
+
+        assertThatThrownBy(() -> service.cancel(activityId, hostId, tooLong))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(activity.getCancelledAt()).isNull();
+        verify(events, never()).publishEvent(any(Object.class));
+    }
+
+    @Test
     void aPlanThatAlreadyHappenedCannotBeCancelled() {
         activity.setStartedAt(ZonedDateTime.now().minusHours(3));
         activity.setEndedAt(ZonedDateTime.now().minusHours(2));
 
-        assertThatThrownBy(() -> service.cancel(activityId, hostId))
+        assertThatThrownBy(() -> service.cancel(activityId, hostId, null))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThat(activity.getCancelledAt()).isNull();
     }
 
     @Test
     void someoneElsesPlanCannotBeCancelled() {
-        assertThatThrownBy(() -> service.cancel(activityId, guest))
+        assertThatThrownBy(() -> service.cancel(activityId, guest, null))
                 .isInstanceOf(ActivityNotVisibleException.class);
     }
 
