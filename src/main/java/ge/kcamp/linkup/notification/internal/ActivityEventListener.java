@@ -3,6 +3,7 @@ package ge.kcamp.linkup.notification.internal;
 import ge.kcamp.linkup.activity.ActivityCancelledEvent;
 import ge.kcamp.linkup.activity.ActivityCreatedEvent;
 import ge.kcamp.linkup.activity.ActivityEditedEvent;
+import ge.kcamp.linkup.activity.ActivityInvitationDeclinedEvent;
 import ge.kcamp.linkup.activity.ActivityInvitationsSentEvent;
 import ge.kcamp.linkup.activity.ActivityRemindedEvent;
 import ge.kcamp.linkup.activity.ActivityStartedEvent;
@@ -360,6 +361,26 @@ public class ActivityEventListener {
                 body,
                 Map.of("activityId", event.activityId().toString(),
                         "otherUserId", event.hostId().toString())
+        ), event.occurredAt());
+    }
+
+    /**
+     * A guest said no, for the host: who, to what, and why if they said. The reason is the
+     * body because it is the part worth reading; without one the title carries the news.
+     */
+    @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
+    public void onInvitationDeclined(ActivityInvitationDeclinedEvent event) {
+        String guest = usernameOf(event.declinerId());
+        String body = event.reason() == null
+                ? "No reason given"
+                : "“" + event.reason() + "”";
+        notificationDispatcher.dispatch(new NotificationMessage(
+                event.hostId(),
+                "INVITE_DECLINED",
+                guest + " can't make it to " + event.title(),
+                body,
+                Map.of("activityId", event.activityId().toString(),
+                        "otherUserId", event.declinerId().toString())
         ), event.occurredAt());
     }
 

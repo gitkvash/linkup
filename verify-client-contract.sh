@@ -190,6 +190,12 @@ has "GET /activities/{id}/participants" "$(curl -s -H "$AUTHA" "$API/activities/
 
 has "POST /activities/{id}/join returns viewerStatus" "$(curl -s -X POST -H "$AUTHB" "$API/activities/$AID/join")" '"viewerStatus"'
 has "POST /activities/{id}/respond?going=false" "$(curl -s -X POST -H "$AUTHB" "$API/activities/$AID/respond?going=false")" 'DECLINED'
+# The client always sends a JSON body ({} or {"reason": ...}); the bodiless call above is the
+# older shape and must keep working. The reason is the host's to read, capped at 200.
+has "respond?going=false takes a reason in the body" "$(curl -s -X POST -H "$AUTHB" -H "$JSON" "$API/activities/$AID/respond?going=false" -d '{"reason":"Work until 7"}')" 'DECLINED'
+has "the host reads the decline reason" "$(curl -s -H "$AUTHA" "$API/activities/$AID/participants")" '"declineReason":"Work until 7"'
+check "a reason over 200 characters is a 400" 400 "$(code -X POST -H "$AUTHB" -H "$JSON" "$API/activities/$AID/respond?going=false" -d "{\"reason\":\"$(head -c 201 /dev/zero | tr '\0' x)\"}")"
+check "an empty {} body still answers" 200 "$(code -X POST -H "$AUTHB" -H "$JSON" "$API/activities/$AID/respond?going=false" -d '{}')"
 # Joining is documented as idempotent, and the client can genuinely fire two at once (the
 # same account on a second device, or a retry). Read-then-write made both callers see no
 # row, both insert, and one lose on the primary key - a 409 for an operation whose whole

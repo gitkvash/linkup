@@ -23,6 +23,10 @@ public class Participant {
     @Column(name = "status", nullable = false, length = 20)
     private ParticipantStatus status;
 
+    /** Why they said no, in their words. Only ever set while {@code status} is DECLINED. */
+    @Column(name = "decline_reason", length = 200)
+    private String declineReason;
+
     public Participant() {}
 
     public Participant(ParticipantId id, Activity activity, ParticipantStatus status) {

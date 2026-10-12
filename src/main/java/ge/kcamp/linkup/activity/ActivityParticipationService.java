@@ -1,6 +1,7 @@
 package ge.kcamp.linkup.activity;
 
 import ge.kcamp.linkup.activity.command.ActivityPersistenceService;
+import ge.kcamp.linkup.activity.dto.RespondRequest;
 import ge.kcamp.linkup.activity.entity.Activity;
 import ge.kcamp.linkup.activity.entity.Participant;
 import ge.kcamp.linkup.activity.entity.ParticipantId;
@@ -85,13 +86,47 @@ public class ActivityParticipationService {
         eventPublisher.publishEvent(new ActivityChangedEvent(activityId, Instant.now()));
     }
 
-    /** Accept or decline an invitation. */
+    /**
+     * Accept or decline an invitation. A decline may carry a short {@code reason} for the
+     * host; blank counts as none, and it is ignored on accept (which clears any earlier one).
+     * <p>
+     * The host is told about a decline, but not about the same one twice: answering "no" again
+     * with nothing new to say is not news, while a changed reason is.
+     */
     @Transactional
-    public ParticipantStatus respond(UUID activityId, UUID userId, boolean going) {
-        requireVisible(activityId, userId);
-        ParticipantStatus status = upsert(
-                activityId, userId, going ? ParticipantStatus.JOINED : ParticipantStatus.DECLINED);
-        eventPublisher.publishEvent(new ActivityChangedEvent(activityId, Instant.now()));
+    public ParticipantStatus respond(UUID activityId, UUID userId, boolean going, String reason) {
+        Activity activity = requireVisible(activityId, userId);
+        String trimmed = going || reason == null ? "" : reason.strip();
+        if (trimmed.length() > RespondRequest.MAX_REASON) {
+            throw new IllegalArgumentException(
+                    "Keep the reason under " + RespondRequest.MAX_REASON + " characters.");
+        }
+        String previousReason = null;
+        boolean alreadyDeclined = false;
+        if (!going) {
+            Participant before = participantRepository
+                    .findByIdActivityIdAndIdUserId(activityId, userId).orElse(null);
+            alreadyDeclined = before != null && before.getStatus() == ParticipantStatus.DECLINED;
+            previousReason = before == null ? null : before.getDeclineReason();
+        }
+
+        ParticipantStatus status;
+        if (going || trimmed.isEmpty()) {
+            status = upsert(
+                    activityId, userId, going ? ParticipantStatus.JOINED : ParticipantStatus.DECLINED);
+        } else {
+            participantRepository.upsertDecline(activityId, userId, trimmed);
+            status = ParticipantStatus.DECLINED;
+        }
+        Instant now = Instant.now();
+        eventPublisher.publishEvent(new ActivityChangedEvent(activityId, now));
+
+        boolean news = !alreadyDeclined || !trimmed.equals(previousReason == null ? "" : previousReason);
+        if (!going && news && !userId.equals(activity.getCreatorId())) {
+            eventPublisher.publishEvent(new ActivityInvitationDeclinedEvent(
+                    activityId, activity.getCreatorId(), userId, activity.getTitle(),
+                    trimmed.isEmpty() ? null : trimmed, now));
+        }
         return status;
     }
 
@@ -143,7 +178,7 @@ public class ActivityParticipationService {
     /** Who's involved, with their names, for the detail screen. */
     @Transactional(readOnly = true)
     public List<ActivityParticipant> listParticipants(UUID activityId, UUID viewerId) {
-        requireVisible(activityId, viewerId);
+        UUID hostId = requireVisible(activityId, viewerId).getCreatorId();
 
         List<Participant> participants =
                 participantRepository.findByIdActivityIdOrderByStatusAsc(activityId);
@@ -154,10 +189,13 @@ public class ActivityParticipationService {
                 .map(participant -> {
                     UUID participantUserId = participant.getId().getUserId();
                     UserSummary summary = users.get(participantUserId);
+                    // A reason is said to the host; other guests don't get to read it.
+                    boolean mayRead = viewerId.equals(hostId) || viewerId.equals(participantUserId);
                     return new ActivityParticipant(
                             participantUserId,
                             summary == null ? null : summary.username(),
-                            participant.getStatus());
+                            participant.getStatus(),
+                            mayRead ? participant.getDeclineReason() : null);
                 })
                 .toList();
     }

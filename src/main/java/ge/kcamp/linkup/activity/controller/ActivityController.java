@@ -14,6 +14,7 @@ import ge.kcamp.linkup.activity.command.UpdateActivityCommand;
 import ge.kcamp.linkup.activity.dto.CreateStructuredActivityRequest;
 import ge.kcamp.linkup.activity.dto.InviteRequest;
 import ge.kcamp.linkup.activity.dto.ParticipationDto;
+import ge.kcamp.linkup.activity.dto.RespondRequest;
 import ge.kcamp.linkup.activity.dto.TimeProposalRequest;
 import ge.kcamp.linkup.activity.dto.UpdateActivityRequest;
 import ge.kcamp.linkup.activity.entity.Activity;
@@ -205,12 +206,17 @@ public class ActivityController {
         return ResponseEntity.noContent().build();
     }
 
-    /** Answer an invitation: {@code going=true} accepts, {@code false} declines. */
+    /**
+     * Answer an invitation: {@code going=true} accepts, {@code false} declines. A decline may
+     * carry a short reason for the host in the body; the body is optional and ignored on accept.
+     */
     @PostMapping("/{id}/respond")
     public ResponseEntity<ParticipationDto> respond(
-            @PathVariable UUID id, @RequestParam boolean going) {
-        return ResponseEntity.ok(new ParticipationDto(
-                participationService.respond(id, UserContext.getUserId(), going)));
+            @PathVariable UUID id,
+            @RequestParam boolean going,
+            @Valid @RequestBody(required = false) RespondRequest request) {
+        return ResponseEntity.ok(new ParticipationDto(participationService.respond(
+                id, UserContext.getUserId(), going, request == null ? null : request.reason())));
     }
 
     /**

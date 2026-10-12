@@ -67,10 +67,28 @@ public interface ParticipantRepository extends JpaRepository<Participant, Partic
     @Query(value = """
             INSERT INTO participants (activity_id, user_id, status)
             VALUES (:activityId, :userId, :status)
-            ON CONFLICT (activity_id, user_id) DO UPDATE SET status = EXCLUDED.status
+            ON CONFLICT (activity_id, user_id) DO UPDATE
+                SET status = EXCLUDED.status, decline_reason = NULL
             """, nativeQuery = true)
     void upsertStatus(
             @Param("activityId") UUID activityId,
             @Param("userId") UUID userId,
             @Param("status") String status);
+
+    /**
+     * {@link #upsertStatus} for a decline that comes with a reason. Kept apart so a yes can
+     * never carry one: every other write to the status goes through the query above, which
+     * clears the reason.
+     */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(value = """
+            INSERT INTO participants (activity_id, user_id, status, decline_reason)
+            VALUES (:activityId, :userId, 'DECLINED', :reason)
+            ON CONFLICT (activity_id, user_id) DO UPDATE
+                SET status = 'DECLINED', decline_reason = EXCLUDED.decline_reason
+            """, nativeQuery = true)
+    void upsertDecline(
+            @Param("activityId") UUID activityId,
+            @Param("userId") UUID userId,
+            @Param("reason") String reason);
 }
