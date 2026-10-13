@@ -164,6 +164,8 @@ public class ActivityTimeProposalService {
                 .findByActivityIdAndStatusOrderByCreatedAtAsc(activityId, TimeProposalStatus.PENDING)) {
             resolve(other, TimeProposalStatus.SUPERSEDED, now);
         }
+        // The host's own call, so a plan's cap is not checked here: someone they chose to move
+        // the plan for gets the place even if that takes it past maxParticipants.
         participantRepository.upsertStatus(activityId, proposal.getProposerId(), ParticipantStatus.JOINED.name());
 
         Instant at = now.toInstant();

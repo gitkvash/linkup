@@ -8,6 +8,7 @@ import ge.kcamp.linkup.activity.ActivityUpdatedEvent;
 import ge.kcamp.linkup.activity.StructuredEventSpec;
 import ge.kcamp.linkup.activity.entity.Activity;
 import ge.kcamp.linkup.activity.entity.Location;
+import ge.kcamp.linkup.activity.enums.ParticipantStatus;
 import ge.kcamp.linkup.activity.exception.ActivityNotVisibleException;
 import ge.kcamp.linkup.activity.repository.ActivityRepository;
 import ge.kcamp.linkup.activity.repository.LocationRepository;
@@ -22,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.ZonedDateTime;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -56,7 +58,8 @@ public class ActivityCommandHandler {
         StructuredEventSpec spec = new StructuredEventSpec(
                 command.title(), command.startTime(), command.endTime(), command.hasTime(),
                 command.addressText(), command.lat(), command.lng(),
-                command.repeatFrequency(), command.repeatInterval(), command.repeatUntil());
+                command.repeatFrequency(), command.repeatInterval(), command.repeatUntil(),
+                command.description(), command.meetingPoint(), command.maxParticipants());
 
         return activityPersistenceService.createAndPersist(spec, command.creatorId(),
                 command.visibility(), command.groupId(), command.lat(), command.lng(),
@@ -91,6 +94,9 @@ public class ActivityCommandHandler {
         Location previousLocation = locationRepository.findByActivityId(activity.getId()).orElse(null);
         String previousAddress = normalised(previousLocation == null ? null : previousLocation.getAddressText());
         Point previousPoint = previousLocation == null ? null : previousLocation.getGeomPoint();
+        String previousMeetingPoint = activity.getMeetingPoint();
+
+        requireCapacityFits(activity.getId(), command.maxParticipants());
 
         activity.setTitle(command.title());
         activity.setStartTime(command.startTime());
@@ -111,6 +117,9 @@ public class ActivityCommandHandler {
         if (command.category() != null) {
             activity.setCategory(command.category());
         }
+        activity.setDescription(command.description());
+        activity.setMeetingPoint(command.meetingPoint());
+        activity.setMaxParticipants(command.maxParticipants());
 
         boolean hasCoordinates = command.lat() != null && command.lng() != null;
         // A plan edited through the structured form has a real time and place, which is
@@ -125,11 +134,15 @@ public class ActivityCommandHandler {
 
         Instant now = Instant.now();
         eventPublisher.publishEvent(new ActivityUpdatedEvent(
-                saved.getId(), saved.getCreatorId(), saved.getStartTime(), audienceGroupId, now));
+                saved.getId(), saved.getCreatorId(), saved.getStartTime(), audienceGroupId,
+                saved.getVisibility(), everyoneWithARow(saved.getId()), now));
 
         String address = normalised(command.addressText());
+        // "By the fountain" moving to "at the gate" changes where people show up, so it is as
+        // much a place change as a moved pin. The note itself is not news.
         boolean placeChanged = !Objects.equals(previousAddress, address)
-                || movedByMoreThanAMetre(previousPoint, command.lat(), command.lng());
+                || movedByMoreThanAMetre(previousPoint, command.lat(), command.lng())
+                || !Objects.equals(previousMeetingPoint, command.meetingPoint());
         boolean titleChanged = !Objects.equals(previousTitle, saved.getTitle());
         boolean scheduleChanged = !previousSchedule.equals(Schedule.of(saved));
         publishEdited(saved, titleChanged ? previousTitle : null, scheduleChanged, placeChanged, address,
@@ -159,7 +172,8 @@ public class ActivityCommandHandler {
 
         Instant now = Instant.now();
         eventPublisher.publishEvent(new ActivityUpdatedEvent(
-                saved.getId(), saved.getCreatorId(), saved.getStartTime(), saved.getGroupId(), now));
+                saved.getId(), saved.getCreatorId(), saved.getStartTime(), saved.getGroupId(),
+                saved.getVisibility(), everyoneWithARow(saved.getId()), now));
         publishEdited(saved, null, !previous.equals(Schedule.of(saved)), false, null, command.notTold(), now);
         return saved;
     }
@@ -195,6 +209,31 @@ public class ActivityCommandHandler {
                 saved.getId(), saved.getCreatorId(), saved.getTitle(), previousTitle,
                 scheduleChanged, next == null ? saved.getStartTime() : next, saved.isHasTime(),
                 placeChanged, address, participants, now));
+    }
+
+    /**
+     * A cap below the people already going would leave a plan that is over-full the moment
+     * it is saved, which nothing could resolve. Refused instead, with the number to beat.
+     */
+    private void requireCapacityFits(UUID activityId, Integer maxParticipants) {
+        if (maxParticipants == null) {
+            return;
+        }
+        long going = participantRepository.countByIdActivityIdAndStatus(activityId, ParticipantStatus.JOINED);
+        if (maxParticipants < going) {
+            throw new IllegalArgumentException(
+                    "Already " + going + " going, so the limit can't be lower than " + going + ".");
+        }
+    }
+
+    /**
+     * Everyone with a participant row, whatever its status. A row of any status makes the
+     * plan visible to its owner (see {@code ActivityVisibilitySql}), so this is the part of
+     * a plan's audience the feed can't derive from the creator's friends or group.
+     */
+    private List<UUID> everyoneWithARow(UUID activityId) {
+        return participantRepository.findUserIdsByActivityAndStatusIn(
+                activityId, EnumSet.allOf(ParticipantStatus.class));
     }
 
     /** Blank and absent are the same place: none. */
@@ -253,10 +292,14 @@ public class ActivityCommandHandler {
                 .stream()
                 .filter(userId -> !userId.equals(activity.getCreatorId()))
                 .toList();
+        // Read before the cascade takes the rows: the feed has to know whose timelines
+        // the plan reached, which for a PRIVATE plan is exactly these people.
+        List<UUID> everyone = everyoneWithARow(activity.getId());
         activityRepository.delete(activity);
         Instant now = Instant.now();
         eventPublisher.publishEvent(new ActivityDeletedEvent(
-                activity.getId(), activity.getCreatorId(), now));
+                activity.getId(), activity.getCreatorId(), activity.getVisibility(),
+                activity.getGroupId(), everyone, now));
         if (!participants.isEmpty()) {
             eventPublisher.publishEvent(new ActivityCancelledEvent(
                     activity.getId(), activity.getCreatorId(), activity.getTitle(),

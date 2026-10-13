@@ -127,18 +127,15 @@ public class ActivityEventListener {
         String host = userDirectoryService.findById(hostId)
                 .map(UserSummary::username)
                 .orElse("Someone");
-        for (var inviteeId : invitees) {
-            if (inviteeId.equals(hostId)) {
-                continue;
-            }
-            notificationDispatcher.dispatch(new NotificationMessage(
-                    inviteeId,
-                    "ACTIVITY_INVITE",
-                    host + " invited you: " + title,
-                    "Starts " + formatWhen(startTime),
-                    Map.of("activityId", activityId.toString(), "otherUserId", hostId.toString())
-            ), occurredAt);
-        }
+        notificationDispatcher.dispatchAll(invitees.stream()
+                .filter(inviteeId -> !inviteeId.equals(hostId))
+                .map(inviteeId -> new NotificationMessage(
+                        inviteeId,
+                        "ACTIVITY_INVITE",
+                        host + " invited you: " + title,
+                        "Starts " + formatWhen(startTime),
+                        Map.of("activityId", activityId.toString(), "otherUserId", hostId.toString())))
+                .toList(), occurredAt);
     }
 
     /**
@@ -162,32 +159,30 @@ public class ActivityEventListener {
         }
         String host = usernameOf(event.creatorId());
         String group = groupService.groupName(event.groupId()).orElse("your group");
-        for (var memberId : members) {
-            notificationDispatcher.dispatch(new NotificationMessage(
-                    memberId,
-                    "GROUP_ACTIVITY",
-                    host + " posted in " + group + ": " + event.title(),
-                    "Starts " + formatWhen(event.startTime()),
-                    Map.of("activityId", event.activityId().toString(),
-                            "otherUserId", event.creatorId().toString())
-            ), event.occurredAt());
-        }
+        notificationDispatcher.dispatchAll(members.stream()
+                .map(memberId -> new NotificationMessage(
+                        memberId,
+                        "GROUP_ACTIVITY",
+                        host + " posted in " + group + ": " + event.title(),
+                        "Starts " + formatWhen(event.startTime()),
+                        Map.of("activityId", event.activityId().toString(),
+                                "otherUserId", event.creatorId().toString())))
+                .toList(), event.occurredAt());
     }
 
     /** The host started the plan early or on time, for everyone joined or invited. */
     @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
     public void onActivityStarted(ActivityStartedEvent event) {
         String host = usernameOf(event.hostId());
-        for (var participantId : event.participantIds()) {
-            notificationDispatcher.dispatch(new NotificationMessage(
-                    participantId,
-                    "ACTIVITY_STARTED",
-                    host + " started " + event.title(),
-                    "It's happening now.",
-                    Map.of("activityId", event.activityId().toString(),
-                            "otherUserId", event.hostId().toString())
-            ), event.occurredAt());
-        }
+        notificationDispatcher.dispatchAll(event.participantIds().stream()
+                .map(participantId -> new NotificationMessage(
+                        participantId,
+                        "ACTIVITY_STARTED",
+                        host + " started " + event.title(),
+                        "It's happening now.",
+                        Map.of("activityId", event.activityId().toString(),
+                                "otherUserId", event.hostId().toString())))
+                .toList(), event.occurredAt());
     }
 
     /**
@@ -206,16 +201,15 @@ public class ActivityEventListener {
         String body = event.reason() == null
                 ? "It was planned for " + when + "."
                 : "Reason: “" + event.reason() + "”";
-        for (var participantId : event.participantIds()) {
-            notificationDispatcher.dispatch(new NotificationMessage(
-                    participantId,
-                    "ACTIVITY_CANCELLED",
-                    host + " cancelled " + event.title(),
-                    body,
-                    Map.of("activityId", event.activityId().toString(),
-                            "otherUserId", event.hostId().toString())
-            ), event.occurredAt());
-        }
+        notificationDispatcher.dispatchAll(event.participantIds().stream()
+                .map(participantId -> new NotificationMessage(
+                        participantId,
+                        "ACTIVITY_CANCELLED",
+                        host + " cancelled " + event.title(),
+                        body,
+                        Map.of("activityId", event.activityId().toString(),
+                                "otherUserId", event.hostId().toString())))
+                .toList(), event.occurredAt());
     }
 
     /**
@@ -231,15 +225,14 @@ public class ActivityEventListener {
             return;
         }
         long minutes = Math.max(1, (left.toSeconds() + 59) / 60);
-        for (var participantId : event.participantIds()) {
-            notificationDispatcher.dispatch(new NotificationMessage(
-                    participantId,
-                    "ACTIVITY_REMINDER",
-                    event.title() + " starts in " + minutes + " min",
-                    "Starts at " + TIME.format(event.startTime().withZoneSameInstant(zone)) + ".",
-                    Map.of("activityId", event.activityId().toString())
-            ), event.occurredAt());
-        }
+        notificationDispatcher.dispatchAll(event.participantIds().stream()
+                .map(participantId -> new NotificationMessage(
+                        participantId,
+                        "ACTIVITY_REMINDER",
+                        event.title() + " starts in " + minutes + " min",
+                        "Starts at " + TIME.format(event.startTime().withZoneSameInstant(zone)) + ".",
+                        Map.of("activityId", event.activityId().toString())))
+                .toList(), event.occurredAt());
     }
 
     /**
@@ -263,16 +256,15 @@ public class ActivityEventListener {
             changes.add("Was “" + event.previousTitle() + "”");
         }
         String body = String.join(" · ", changes);
-        for (var participantId : event.participantIds()) {
-            notificationDispatcher.dispatch(new NotificationMessage(
-                    participantId,
-                    "ACTIVITY_UPDATED",
-                    host + " updated " + event.title(),
-                    body,
-                    Map.of("activityId", event.activityId().toString(),
-                            "otherUserId", event.hostId().toString())
-            ), event.occurredAt());
-        }
+        notificationDispatcher.dispatchAll(event.participantIds().stream()
+                .map(participantId -> new NotificationMessage(
+                        participantId,
+                        "ACTIVITY_UPDATED",
+                        host + " updated " + event.title(),
+                        body,
+                        Map.of("activityId", event.activityId().toString(),
+                                "otherUserId", event.hostId().toString())))
+                .toList(), event.occurredAt());
     }
 
     /**
@@ -288,16 +280,15 @@ public class ActivityEventListener {
                 : "Starts " + (event.hasTime()
                         ? formatWhen(event.startTime())
                         : DAY.format(event.startTime().withZoneSameInstant(zone)));
-        for (var participantId : event.participantIds()) {
-            notificationDispatcher.dispatch(new NotificationMessage(
-                    participantId,
-                    "ACTIVITY_REMINDER",
-                    host + " reminded you: " + event.title(),
-                    body,
-                    Map.of("activityId", event.activityId().toString(),
-                            "otherUserId", event.hostId().toString())
-            ), event.occurredAt());
-        }
+        notificationDispatcher.dispatchAll(event.participantIds().stream()
+                .map(participantId -> new NotificationMessage(
+                        participantId,
+                        "ACTIVITY_REMINDER",
+                        host + " reminded you: " + event.title(),
+                        body,
+                        Map.of("activityId", event.activityId().toString(),
+                                "otherUserId", event.hostId().toString())))
+                .toList(), event.occurredAt());
     }
 
     /**
@@ -313,18 +304,16 @@ public class ActivityEventListener {
             return;
         }
         String at = TIME.format(event.startTime().withZoneSameInstant(zone));
-        for (var participantId : event.participantIds()) {
-            boolean host = participantId.equals(event.hostId());
-            notificationDispatcher.dispatch(new NotificationMessage(
-                    participantId,
-                    "ACTIVITY_STARTING",
-                    event.title() + " starts now",
-                    host
-                            ? "Start it when everyone's there, or it's cancelled in two hours."
-                            : "It was planned for " + at + ".",
-                    Map.of("activityId", event.activityId().toString())
-            ), event.occurredAt());
-        }
+        notificationDispatcher.dispatchAll(event.participantIds().stream()
+                .map(participantId -> new NotificationMessage(
+                        participantId,
+                        "ACTIVITY_STARTING",
+                        event.title() + " starts now",
+                        participantId.equals(event.hostId())
+                                ? "Start it when everyone's there, or it's cancelled in two hours."
+                                : "It was planned for " + at + ".",
+                        Map.of("activityId", event.activityId().toString())))
+                .toList(), event.occurredAt());
     }
 
     /**

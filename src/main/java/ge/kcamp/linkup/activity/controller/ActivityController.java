@@ -61,7 +61,8 @@ public class ActivityController {
                 creatorId, request.title(), request.startTime(), request.endTime(), request.resolvedHasTime(),
                 request.lat(), request.lng(), request.addressText(), request.visibility(), request.groupId(),
                 invitees, request.category(), request.repeatFrequency(),
-                request.resolvedRepeatInterval(), request.resolvedRepeatUntil()));
+                request.resolvedRepeatInterval(), request.resolvedRepeatUntil(),
+                request.resolvedDescription(), request.resolvedMeetingPoint(), request.maxParticipants()));
         return ResponseEntity.status(HttpStatus.CREATED).body(activity);
     }
 
@@ -94,7 +95,8 @@ public class ActivityController {
                 request.resolvedHasTime(), request.lat(), request.lng(), request.addressText(),
                 request.visibility(), request.groupId(), request.category(),
                 request.repeatFrequency(), request.resolvedRepeatInterval(),
-                request.resolvedRepeatUntil()));
+                request.resolvedRepeatUntil(), request.resolvedDescription(),
+                request.resolvedMeetingPoint(), request.maxParticipants()));
 
         return activityQueryService.findById(id, actorId)
                 .map(ResponseEntity::ok)
@@ -218,6 +220,17 @@ public class ActivityController {
             @Valid @RequestBody(required = false) RespondRequest request) {
         return ResponseEntity.ok(new ParticipationDto(participationService.respond(
                 id, UserContext.getUserId(), going, request == null ? null : request.reason())));
+    }
+
+    /**
+     * "Might come": the caller answers without taking a place. Takes no body and is
+     * idempotent; 400 for the host, 404 for a plan the caller can't see. Going later is
+     * {@code POST /join} or {@code /respond?going=true}, and can be refused if the plan filled.
+     */
+    @PostMapping("/{id}/maybe")
+    public ResponseEntity<ParticipationDto> maybe(@PathVariable UUID id) {
+        return ResponseEntity.ok(new ParticipationDto(
+                participationService.maybe(id, UserContext.getUserId())));
     }
 
     /**

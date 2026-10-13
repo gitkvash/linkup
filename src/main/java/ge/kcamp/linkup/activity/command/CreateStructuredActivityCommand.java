@@ -13,6 +13,9 @@ import java.util.UUID;
  *                        {@code repeatInterval} of that unit until {@code repeatUntil}
  *                        (null = no end date). Already normalised by the DTO: the
  *                        interval and the end date are null whenever the frequency is.
+ * @param description     a note for the people coming; already stripped, null when blank.
+ * @param meetingPoint    where to find the host at the place; already stripped, null when blank.
+ * @param maxParticipants the cap on JOINED people, host included; null for none.
  */
 public record CreateStructuredActivityCommand(
         UUID creatorId,
@@ -29,6 +32,9 @@ public record CreateStructuredActivityCommand(
         ActivityCategory category,
         RepeatFrequency repeatFrequency,
         Integer repeatInterval,
-        ZonedDateTime repeatUntil
+        ZonedDateTime repeatUntil,
+        String description,
+        String meetingPoint,
+        Integer maxParticipants
 ) {
 }

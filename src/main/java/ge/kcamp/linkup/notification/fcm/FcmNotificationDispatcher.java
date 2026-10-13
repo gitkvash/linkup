@@ -13,8 +13,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Pushes through FCM. The database is touched in two short transactions - reading the
@@ -29,6 +32,9 @@ public class FcmNotificationDispatcher implements NotificationDispatcher {
     private static final Logger log = LoggerFactory.getLogger(FcmNotificationDispatcher.class);
     private static final Set<MessagingErrorCode> PRUNABLE_ERRORS =
             Set.of(MessagingErrorCode.UNREGISTERED, MessagingErrorCode.INVALID_ARGUMENT);
+
+    /** The most messages one {@code sendEach} accepts. */
+    private static final int MAX_BATCH = 500;
 
     private final FcmClientProvider clientProvider;
     private final DeviceTokenRepository deviceTokenRepository;
@@ -46,6 +52,16 @@ public class FcmNotificationDispatcher implements NotificationDispatcher {
         this.writeTransaction = new TransactionTemplate(transactionManager);
     }
 
+    @Override
+    public void dispatch(NotificationMessage message) {
+        dispatchAll(List.of(message));
+    }
+
+    /**
+     * Every recipient's tokens in one read, and one {@code sendEach} per
+     * {@value #MAX_BATCH} messages, rather than a read and a round trip to Google per
+     * recipient - which is what a group plan's notice cost, one member at a time.
+     */
     // firebase-admin deprecates all FCM-registration-token targeting (both
     // MulticastMessage#addAllTokens and Message.Builder#setToken) in favor of
     // Firebase Installation IDs (FIDs). Adopting FIDs would require the client
@@ -55,52 +71,73 @@ public class FcmNotificationDispatcher implements NotificationDispatcher {
     // rather than worked around.
     @SuppressWarnings("deprecation")
     @Override
-    public void dispatch(NotificationMessage message) {
+    public void dispatchAll(List<NotificationMessage> messages) {
+        if (messages.isEmpty()) {
+            return;
+        }
         Optional<FirebaseMessaging> client = clientProvider.getClient();
         if (client.isEmpty()) {
-            log.debug("FCM not configured, skipping push for {}", message.recipientUserId());
+            log.debug("FCM not configured, skipping push for {} recipient(s)", messages.size());
             return;
         }
 
-        List<DeviceToken> tokens = readTransaction.execute(
-                status -> deviceTokenRepository.findByIdUserId(message.recipientUserId()));
-        if (tokens == null || tokens.isEmpty()) {
+        Set<UUID> recipients = messages.stream()
+                .map(NotificationMessage::recipientUserId)
+                .collect(Collectors.toSet());
+        List<DeviceToken> allTokens = readTransaction.execute(
+                status -> deviceTokenRepository.findByIdUserIdIn(recipients));
+        if (allTokens == null || allTokens.isEmpty()) {
             return;
         }
+        Map<UUID, List<DeviceToken>> tokensByUser = allTokens.stream()
+                .collect(Collectors.groupingBy(token -> token.getId().getUserId()));
 
-        Notification notification = Notification.builder()
-                .setTitle(message.title())
-                .setBody(message.body() == null ? "" : message.body())
-                .build();
+        // One FCM message per (message, token), with the token it went to kept alongside:
+        // pruneInvalidTokens matches responses to tokens by position.
+        List<DeviceToken> targets = new ArrayList<>();
+        List<Message> outgoing = new ArrayList<>();
+        for (NotificationMessage message : messages) {
+            List<DeviceToken> tokens = tokensByUser.getOrDefault(message.recipientUserId(), List.of());
+            if (tokens.isEmpty()) {
+                continue;
+            }
+            Notification notification = Notification.builder()
+                    .setTitle(message.title())
+                    .setBody(message.body() == null ? "" : message.body())
+                    .build();
+            for (DeviceToken token : tokens) {
+                Message.Builder messageBuilder = Message.builder()
+                        .setToken(token.getId().getFcmToken())
+                        .setNotification(notification);
+                if (message.metadata() != null) {
+                    messageBuilder.putAllData(message.metadata());
+                }
+                // The type, so a push that lands while the app is open can be
+                // told apart - an invitation opens an Accept/Decline prompt,
+                // other types only refresh the Alerts list.
+                messageBuilder.putData("type", message.type());
+                outgoing.add(messageBuilder.build());
+                targets.add(token);
+            }
+        }
 
-        // sendEach(List<Message>) is the current (non-deprecated) batch-send API
-        // and guarantees response order matches the input list, which
+        // sendEach(List<Message>) is the current (non-deprecated) batch-send API, takes at
+        // most 500 messages, and guarantees response order matches the input list, which
         // pruneInvalidTokens relies on.
-        List<Message> messages = tokens.stream()
-                .map(t -> {
-                    Message.Builder messageBuilder = Message.builder()
-                            .setToken(t.getId().getFcmToken())
-                            .setNotification(notification);
-                    if (message.metadata() != null) {
-                        messageBuilder.putAllData(message.metadata());
-                    }
-                    // The type, so a push that lands while the app is open can be
-                    // told apart - an invitation opens an Accept/Decline prompt,
-                    // other types only refresh the Alerts list.
-                    messageBuilder.putData("type", message.type());
-                    return messageBuilder.build();
-                })
-                .toList();
-
-        try {
-            BatchResponse response = client.get().sendEach(messages);
-            pruneInvalidTokens(tokens, response);
-        } catch (FirebaseMessagingException e) {
-            log.warn("FCM send failed for {}: {}", message.recipientUserId(), e.getMessage());
+        List<DeviceToken> dead = new ArrayList<>();
+        for (int from = 0; from < outgoing.size(); from += MAX_BATCH) {
+            int to = Math.min(from + MAX_BATCH, outgoing.size());
+            try {
+                BatchResponse response = client.get().sendEach(outgoing.subList(from, to));
+                dead.addAll(invalidTokens(targets.subList(from, to), response));
+            } catch (FirebaseMessagingException e) {
+                log.warn("FCM send failed for {} message(s): {}", to - from, e.getMessage());
+            }
         }
+        pruneInvalidTokens(dead);
     }
 
-    private void pruneInvalidTokens(List<DeviceToken> tokens, BatchResponse response) {
+    private static List<DeviceToken> invalidTokens(List<DeviceToken> tokens, BatchResponse response) {
         List<SendResponse> responses = response.getResponses();
         List<DeviceToken> dead = new ArrayList<>();
         for (int i = 0; i < responses.size() && i < tokens.size(); i++) {
@@ -110,6 +147,10 @@ public class FcmNotificationDispatcher implements NotificationDispatcher {
                 dead.add(tokens.get(i));
             }
         }
+        return dead;
+    }
+
+    private void pruneInvalidTokens(List<DeviceToken> dead) {
         if (dead.isEmpty()) {
             return;
         }

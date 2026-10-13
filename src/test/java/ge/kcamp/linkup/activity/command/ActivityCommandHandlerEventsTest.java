@@ -68,7 +68,7 @@ class ActivityCommandHandlerEventsTest {
         when(persistence.resolveGroupId(creatorId, ActivityVisibility.GROUP, groupId)).thenReturn(groupId);
 
         handler.handle(new UpdateActivityCommand(activityId, creatorId, "Dinner", newStart, null, true,
-                null, null, null, ActivityVisibility.GROUP, groupId, null, null, null, null));
+                null, null, null, ActivityVisibility.GROUP, groupId, null, null, null, null, null, null, null));
 
         ArgumentCaptor<Object> published = ArgumentCaptor.forClass(Object.class);
         verify(events).publishEvent(published.capture());
@@ -135,7 +135,7 @@ class ActivityCommandHandlerEventsTest {
     private void edit(String title, ZonedDateTime start, String address) {
         when(persistence.resolveGroupId(creatorId, ActivityVisibility.FRIENDS, null)).thenReturn(null);
         handler.handle(new UpdateActivityCommand(activityId, creatorId, title, start, null, true,
-                null, null, address, ActivityVisibility.FRIENDS, null, null, null, null, null));
+                null, null, address, ActivityVisibility.FRIENDS, null, null, null, null, null, null, null, null));
     }
 
     private ActivityEditedEvent editedEvent() {

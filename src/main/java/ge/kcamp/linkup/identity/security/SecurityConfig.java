@@ -59,6 +59,12 @@ public class SecurityConfig {
                 // /actuator/metrics readable by anyone - a URI inventory, request counts
                 // and JVM internals, unauthenticated.
                 .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
+                // The landing page behind a shared plan's link. Static apart from the id, and
+                // says nothing about the plan - see ShareLandingController.
+                .requestMatchers("/p/*").permitAll()
+                // The Terms of Service and Privacy Policy. They must be readable before an
+                // account exists, and the app stores want a public address for the policy.
+                .requestMatchers("/legal/terms", "/legal/privacy").permitAll()
                 .anyRequest().authenticated()
             )
             // Without an explicit entry point a missing/expired token yields 403, which clients

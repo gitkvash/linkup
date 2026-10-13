@@ -49,6 +49,13 @@ spring:
     properties:
       hibernate:
         format_sql: true
+        # Inserts of many rows of one entity (a plan's invitees, say) go to the database
+        # as one JDBC batch rather than one round trip each. Ordering groups the
+        # statements by entity so a batch isn't cut short by an interleaved one.
+        jdbc:
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
 
   data:
     redis:
@@ -116,6 +123,13 @@ logging:
     level: "%5p [%X{traceId:-},%X{spanId:-}]"
 
 linkup:
+  # Who the Terms of Service and Privacy Policy (/legal/terms, /legal/privacy) name as
+  # responsible, and where requests and complaints go. Not secrets, but specific to whoever
+  # runs the deployment, so they are set per environment. Unset, the pages say so rather
+  # than naming nobody - set both before the app is published.
+  legal:
+    operator-name: ${LINKUP_LEGAL_OPERATOR_NAME:}
+    contact-email: ${LINKUP_LEGAL_CONTACT_EMAIL:}
   datasource:
     # The role requests are served as: no ownership, no superuser, no BYPASSRLS. Startup
     # fails outside the dev profile if these are unset, rather than falling back to the

@@ -84,13 +84,13 @@ class ActivityRecurrenceTest {
         return new CreateStructuredActivityRequest(
                 "Football", START, null, true, 41.7151, 44.8271, "Rustaveli",
                 ActivityVisibility.FRIENDS, null, List.of(), null,
-                frequency, interval, until);
+                frequency, interval, until, null, null, null);
     }
 
     private static StructuredEventSpec spec(
             RepeatFrequency frequency, Integer interval, ZonedDateTime until) {
         return new StructuredEventSpec(
                 "Football", START, null, true, "Rustaveli", 41.7151, 44.8271,
-                frequency, interval, until);
+                frequency, interval, until, null, null, null);
     }
 }

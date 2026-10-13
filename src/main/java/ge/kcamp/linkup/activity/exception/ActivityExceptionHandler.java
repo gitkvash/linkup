@@ -29,6 +29,12 @@ public class ActivityExceptionHandler {
                 Map.of("groupId", ex.getMessage()));
     }
 
+    /** 409: the plan is full. The client shows the message as is. */
+    @ExceptionHandler(ActivityFullException.class)
+    public ResponseEntity<Map<String, Object>> handleFull(ActivityFullException ex) {
+        return ApiError.of(HttpStatus.CONFLICT, ex.getMessage(), ApiError.CONFLICT);
+    }
+
     /**
      * 404, matching {@code GET /activities/{id}} - a write must not reveal that an
      * activity exists when the read of the same activity wouldn't. Without this

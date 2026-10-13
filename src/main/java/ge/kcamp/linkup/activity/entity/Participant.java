@@ -2,14 +2,23 @@ package ge.kcamp.linkup.activity.entity;
 
 import ge.kcamp.linkup.activity.enums.ParticipantStatus;
 import jakarta.persistence.*;
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
+import org.springframework.data.domain.Persistable;
 
+/**
+ * {@link Persistable} because the id is assigned, not generated - as on
+ * {@code RefreshToken}. Without it Spring Data sees a non-null id, assumes the row exists
+ * and merges: a SELECT before every INSERT, once per invitee when a plan is created.
+ * Status changes don't go through here ({@code ParticipantRepository.upsertStatus}); a
+ * row read back from the database is marked persisted on load, so saving it merges.
+ */
 @Setter
 @Getter
 @Entity
 @Table(name = "participants")
-public class Participant {
+public class Participant implements Persistable<ParticipantId> {
 
     @EmbeddedId
     private ParticipantId id;
@@ -27,12 +36,28 @@ public class Participant {
     @Column(name = "decline_reason", length = 200)
     private String declineReason;
 
+    @Transient
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    private boolean fresh = true;
+
     public Participant() {}
 
     public Participant(ParticipantId id, Activity activity, ParticipantStatus status) {
         this.id = id;
         this.activity = activity;
         this.status = status;
+    }
+
+    @Override
+    public boolean isNew() {
+        return fresh;
+    }
+
+    @PostLoad
+    @PostPersist
+    void markPersisted() {
+        fresh = false;
     }
 
     public static ParticipantBuilder builder() {

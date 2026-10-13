@@ -29,8 +29,12 @@ public interface ParticipantRepository extends JpaRepository<Participant, Partic
 
     long countByIdActivityIdAndStatus(UUID activityId, ParticipantStatus status);
 
-    /** Joined, or invited and yet to answer: who hears that a plan started or was cancelled. */
-    Set<ParticipantStatus> IN_THE_PLAN = Set.of(ParticipantStatus.JOINED, ParticipantStatus.INVITED);
+    /**
+     * Joined, maybe, or invited and yet to answer: who hears that a plan started, was edited
+     * or was cancelled. Only a decline takes someone out of the loop.
+     */
+    Set<ParticipantStatus> IN_THE_PLAN =
+            Set.of(ParticipantStatus.JOINED, ParticipantStatus.INVITED, ParticipantStatus.MAYBE);
 
     /** Who is in a plan with one of these statuses - the recipients of a plan's notifications. */
     @Query("""
@@ -48,6 +52,19 @@ public interface ParticipantRepository extends JpaRepository<Participant, Partic
             """)
     List<UUID> findActivityIdsByUserAndStatus(
             @Param("userId") UUID userId, @Param("status") ParticipantStatus status);
+
+    /**
+     * Takes the plan's lock for the rest of the transaction, so that two people taking the
+     * last place cannot both count it free. A Postgres advisory lock rather than
+     * {@code SELECT ... FOR UPDATE} on the activity row: that needs the UPDATE policy, which
+     * only the host passes, and for anyone else it would quietly lock nothing.
+     * <p>
+     * The key is the activity id hashed to a bigint; a collision between two plans only
+     * makes their joins wait for each other.
+     */
+    @Query(value = "SELECT 1 FROM (SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))) held",
+            nativeQuery = true)
+    int lockPlan(@Param("key") String key);
 
     /**
      * Sets one person's status, inserting the row if it isn't there yet.

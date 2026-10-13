@@ -31,6 +31,8 @@ import java.util.UUID;
  *                        the same figure {@code ActivityFeedItem} carries.
  * @param participantPreview at most three of those people, creator first, for the card's
  *                        avatar stack. Never null; empty when nobody has joined.
+ * @param maxParticipants the cap on {@code participantCount}, or null for no limit: the card
+ *                        shows "6/10" when it is set.
  * @param endTime         when the plan is meant to end, if it says. The live block shows its
  *                        window and a progress bar from it; null means no end was given.
  *                        For a repeating plan this is the first occurrence's end, like
@@ -51,7 +53,8 @@ public record FeedItemDto(
         Integer repeatInterval,
         long participantCount,
         List<Participant> participantPreview,
-        ZonedDateTime endTime
+        ZonedDateTime endTime,
+        Integer maxParticipants
 ) {
 
     /** One avatar in the stack: JSON keys are exactly {@code id} and {@code username}. */

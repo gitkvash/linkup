@@ -53,7 +53,8 @@ class FeedFanOutServiceIT extends AbstractIntegrationTest {
         befriend(creatorId, friendId);
 
         DatabaseRole.runAsSystem(() ->
-                feedFanOutService.fanOutOnWrite(creatorId, activityId, startTime, null));
+                feedFanOutService.fanOutOnWrite(
+                        creatorId, activityId, startTime, ActivityVisibility.FRIENDS, null, List.of()));
 
         Double justAbove = FeedTimelineScore.of(activityId, startTime) + 1;
         List<UUID> creatorTimeline = timelineRepository.read(creatorId, justAbove, 10);
@@ -71,7 +72,8 @@ class FeedFanOutServiceIT extends AbstractIntegrationTest {
         Instant startTime = Instant.now();
 
         DatabaseRole.runAsSystem(() ->
-                feedFanOutService.fanOutOnWrite(creatorId, activityId, startTime, null));
+                feedFanOutService.fanOutOnWrite(
+                        creatorId, activityId, startTime, ActivityVisibility.FRIENDS, null, List.of()));
 
         List<UUID> strangerTimeline =
                 timelineRepository.read(strangerId, FeedTimelineScore.of(activityId, startTime) + 1, 10);
@@ -94,7 +96,8 @@ class FeedFanOutServiceIT extends AbstractIntegrationTest {
         groupService.addMember(creatorId, groupId, memberId);
 
         DatabaseRole.runAsSystem(() ->
-                feedFanOutService.fanOutOnWrite(creatorId, activityId, startTime, groupId));
+                feedFanOutService.fanOutOnWrite(
+                        creatorId, activityId, startTime, ActivityVisibility.GROUP, groupId, List.of()));
 
         Double justAbove = FeedTimelineScore.of(activityId, startTime) + 1;
         assertThat(timelineRepository.read(creatorId, justAbove, 10)).contains(activityId);
@@ -147,7 +150,8 @@ class FeedFanOutServiceIT extends AbstractIntegrationTest {
         Instant startTime = Instant.now();
 
         DatabaseRole.runAsSystem(() ->
-                feedFanOutService.fanOutOnWrite(userId, activityId, startTime, null));
+                feedFanOutService.fanOutOnWrite(
+                        userId, activityId, startTime, ActivityVisibility.FRIENDS, null, List.of()));
 
         double ownScore = FeedTimelineScore.of(activityId, startTime);
         assertThat(timelineRepository.read(userId, ownScore, 10)).doesNotContain(activityId);

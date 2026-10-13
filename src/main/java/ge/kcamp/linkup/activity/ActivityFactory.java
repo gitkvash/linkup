@@ -51,6 +51,9 @@ public class ActivityFactory {
                     .repeatUntil(structured.repeatFrequency() == null
                             ? null
                             : structured.repeatUntil())
+                    .description(structured.description())
+                    .meetingPoint(structured.meetingPoint())
+                    .maxParticipants(structured.maxParticipants())
                     .build();
         };
     }

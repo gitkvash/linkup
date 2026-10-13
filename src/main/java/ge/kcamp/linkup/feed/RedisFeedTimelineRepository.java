@@ -121,6 +121,38 @@ class RedisFeedTimelineRepository {
     }
 
     /**
+     * Takes one plan out of many timelines in one round trip, the counterpart of
+     * {@link #pushAll} for a plan that was deleted. A timeline that never had it is
+     * untouched.
+     */
+    void removeFromAll(Collection<UUID> userIds, UUID activityId) {
+        if (userIds.isEmpty()) {
+            return;
+        }
+        String member = activityId.toString();
+        redisTemplate.executePipelined(new SessionCallback<Object>() {
+            @Override
+            public Object execute(RedisOperations operations) {
+                @SuppressWarnings("unchecked")
+                RedisOperations<String, String> ops = (RedisOperations<String, String>) operations;
+                for (UUID userId : userIds) {
+                    ops.opsForZSet().remove(timelineKey(userId), member);
+                }
+                return null;
+            }
+        });
+    }
+
+    /** Every entry in a user's timeline - at most {@code max-timeline-size}, since pushes trim it. */
+    List<UUID> readAll(UUID userId) {
+        Set<String> ids = redisTemplate.opsForZSet().range(timelineKey(userId), 0, -1);
+        if (ids == null) {
+            return List.of();
+        }
+        return ids.stream().map(UUID::fromString).toList();
+    }
+
+    /**
      * Drops a user's whole timeline, for an account that no longer exists. Its entries
      * would expire on the TTL, but they are a list of who that person was following.
      */

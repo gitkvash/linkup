@@ -61,7 +61,7 @@ class ActivityParticipationDeclineReasonTest {
         activity.setTitle("Dinner");
         when(activities.findById(activityId)).thenReturn(Optional.of(activity));
         // Everyone in the test may see the plan.
-        when(queries.findById(any(), any())).thenReturn(Optional.of(mock(ActivityFeedItem.class)));
+        when(queries.isVisible(any(), any())).thenReturn(true);
 
         Participant declined = new Participant(
                 new ParticipantId(activityId, guest), activity, ParticipantStatus.DECLINED);

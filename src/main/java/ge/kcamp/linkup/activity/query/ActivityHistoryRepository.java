@@ -1,11 +1,18 @@
 package ge.kcamp.linkup.activity.query;
 
+import ge.kcamp.linkup.activity.ActivityStatusResolver;
 import ge.kcamp.linkup.activity.ActivityVisibilitySql;
+import ge.kcamp.linkup.activity.enums.ActivityCategory;
+import ge.kcamp.linkup.activity.enums.RepeatFrequency;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -72,17 +79,30 @@ public class ActivityHistoryRepository {
      * "happened together"; the caller keeps the ones whose status is ended.
      */
     public List<UUID> findStartedTogether(UUID viewerId, UUID otherId) {
-        String sql = "SELECT a.activity_id FROM activities a WHERE "
+        return jdbcTemplate.queryForList(startedTogether("a.activity_id"),
+                startedTogetherParams(viewerId, otherId), UUID.class);
+    }
+
+    /** {@link #findStartedTogether}, as only what counting the ones that happened needs. */
+    public List<Resolvable> findStartedTogetherResolvable(UUID viewerId, UUID otherId) {
+        return jdbcTemplate.query(startedTogether(RESOLVABLE_COLUMNS),
+                startedTogetherParams(viewerId, otherId), ActivityHistoryRepository::mapResolvable);
+    }
+
+    private static String startedTogether(String columns) {
+        return "SELECT " + columns + " FROM activities a WHERE "
                 + TOOK_PART.formatted(":viewerId")
                 + " AND " + TOOK_PART.formatted(":otherId")
                 + " AND a.start_time < now()"
                 + " AND " + ActivityVisibilitySql.VISIBLE_TO_VIEWER
                 + " ORDER BY a.start_time DESC LIMIT " + MAX_CANDIDATES;
+    }
 
+    private static Map<String, Object> startedTogetherParams(UUID viewerId, UUID otherId) {
         Map<String, Object> params = new HashMap<>();
         params.put("otherId", otherId);
         params.put(ActivityVisibilitySql.VIEWER_ID_PARAM, requireViewer(viewerId));
-        return jdbcTemplate.queryForList(sql, params, UUID.class);
+        return params;
     }
 
     /**
@@ -91,18 +111,68 @@ public class ActivityHistoryRepository {
      * screen.
      */
     public List<UUID> findTookPartBetween(UUID personId, UUID viewerId, Instant from, Instant to) {
-        String sql = "SELECT a.activity_id FROM activities a WHERE "
+        return jdbcTemplate.queryForList(tookPartBetween("a.activity_id"),
+                tookPartBetweenParams(personId, viewerId, from, to), UUID.class);
+    }
+
+    /** {@link #findTookPartBetween}, as only what counting the ones that happened needs. */
+    public List<Resolvable> findTookPartBetweenResolvable(UUID personId, UUID viewerId, Instant from, Instant to) {
+        return jdbcTemplate.query(tookPartBetween(RESOLVABLE_COLUMNS),
+                tookPartBetweenParams(personId, viewerId, from, to), ActivityHistoryRepository::mapResolvable);
+    }
+
+    private static String tookPartBetween(String columns) {
+        return "SELECT " + columns + " FROM activities a WHERE "
                 + TOOK_PART.formatted(":personId")
                 + " AND a.start_time >= :from AND a.start_time < :to"
                 + " AND " + ActivityVisibilitySql.VISIBLE_TO_VIEWER
                 + " ORDER BY a.start_time LIMIT " + MAX_CANDIDATES;
+    }
 
+    private static Map<String, Object> tookPartBetweenParams(
+            UUID personId, UUID viewerId, Instant from, Instant to) {
         Map<String, Object> params = new HashMap<>();
         params.put("from", Timestamp.from(from));
         params.put("to", Timestamp.from(to));
         params.put("personId", personId);
         params.put(ActivityVisibilitySql.VIEWER_ID_PARAM, requireViewer(viewerId));
-        return jdbcTemplate.queryForList(sql, params, UUID.class);
+        return params;
+    }
+
+    /**
+     * A candidate as only its category and the columns its status is resolved from. For
+     * a count, where the feed projection - creator, place, group, participant count, the
+     * viewer's own status, each a join or a subquery per row - would be read and dropped.
+     * The status is still resolved by {@link ActivityStatusResolver}, not restated in SQL:
+     * whether a repeating plan has ended needs its occurrences walked.
+     */
+    public record Resolvable(ActivityCategory category, ActivityStatusResolver.Lifecycle lifecycle) {
+    }
+
+    private static final String RESOLVABLE_COLUMNS = """
+            a.category, a.start_time, a.end_time, a.has_time, a.repeat_freq, a.repeat_interval,
+            a.repeat_until, a.started_at, a.ended_at, a.cancelled_at""";
+
+    private static Resolvable mapResolvable(ResultSet rs, int rowNum) throws SQLException {
+        String repeatFreq = rs.getString("repeat_freq");
+        return new Resolvable(
+                ActivityCategory.valueOf(rs.getString("category")),
+                new ActivityStatusResolver.Lifecycle(
+                        zoned(rs, "start_time"),
+                        zoned(rs, "end_time"),
+                        rs.getBoolean("has_time"),
+                        repeatFreq == null ? null : RepeatFrequency.valueOf(repeatFreq),
+                        // getInt() answers 0 for SQL NULL, and "every 0 weeks" is not a rule.
+                        rs.getObject("repeat_interval") == null ? null : rs.getInt("repeat_interval"),
+                        zoned(rs, "repeat_until"),
+                        zoned(rs, "started_at"),
+                        zoned(rs, "ended_at"),
+                        zoned(rs, "cancelled_at")));
+    }
+
+    private static ZonedDateTime zoned(ResultSet rs, String column) throws SQLException {
+        OffsetDateTime value = rs.getObject(column, OffsetDateTime.class);
+        return value == null ? null : value.toZonedDateTime();
     }
 
     /**

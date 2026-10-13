@@ -2,8 +2,10 @@ package ge.kcamp.linkup.people.controller;
 
 import ge.kcamp.linkup.UserContext;
 import ge.kcamp.linkup.activity.ActivityFeedItem;
+import ge.kcamp.linkup.people.CatchUpService;
 import ge.kcamp.linkup.people.PersonProfileService;
 import ge.kcamp.linkup.people.UserStatsService;
+import ge.kcamp.linkup.people.dto.CatchUpDto;
 import ge.kcamp.linkup.people.dto.UserProfileDto;
 import ge.kcamp.linkup.people.dto.UserStatsDto;
 import org.springframework.http.ResponseEntity;
@@ -24,10 +26,15 @@ public class PeopleController {
 
     private final PersonProfileService personProfileService;
     private final UserStatsService userStatsService;
+    private final CatchUpService catchUpService;
 
-    public PeopleController(PersonProfileService personProfileService, UserStatsService userStatsService) {
+    public PeopleController(
+            PersonProfileService personProfileService,
+            UserStatsService userStatsService,
+            CatchUpService catchUpService) {
         this.personProfileService = personProfileService;
         this.userStatsService = userStatsService;
+        this.catchUpService = catchUpService;
     }
 
     /**
@@ -74,6 +81,16 @@ public class PeopleController {
             throw new IllegalArgumentException("year must be between 2000 and 2100");
         }
         return ResponseEntity.ok(userStatsService.stats(UserContext.getUserId(), resolved, zone));
+    }
+
+    /**
+     * Friends the caller has done plans with before but not for at least four weeks, and has
+     * nothing coming up with - the closest first. Empty is normal: for a new account, or one
+     * whose friends are all in plans. {@code limit} is capped at 10.
+     */
+    @GetMapping("/api/v1/me/catch-up")
+    public ResponseEntity<List<CatchUpDto>> catchUp(@RequestParam(defaultValue = "5") int limit) {
+        return ResponseEntity.ok(catchUpService.catchUp(UserContext.getUserId(), limit));
     }
 
     private static ZoneId zoneOrUtc(String tz) {

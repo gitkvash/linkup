@@ -7,12 +7,16 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
 public interface DeviceTokenRepository extends JpaRepository<DeviceToken, DeviceTokenId> {
 
     List<DeviceToken> findByIdUserId(UUID userId);
+
+    /** Every token of every one of these users, in one query - for a push to many at once. */
+    List<DeviceToken> findByIdUserIdIn(Collection<UUID> userIds);
 
     /**
      * Takes a token away from every account except {@code keepUserId}. A token identifies

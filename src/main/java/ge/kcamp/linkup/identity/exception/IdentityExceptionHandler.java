@@ -32,6 +32,15 @@ public class IdentityExceptionHandler {
     }
 
     /**
+     * 428, not 400: nothing was malformed. The client answers it by showing the agreement
+     * and sending the same request again with the version it showed.
+     */
+    @ExceptionHandler(TermsNotAcceptedException.class)
+    public ResponseEntity<Map<String, Object>> handleTermsNotAccepted(TermsNotAcceptedException ex) {
+        return ApiError.of(HttpStatus.PRECONDITION_REQUIRED, ex.getMessage(), ApiError.TERMS_REQUIRED);
+    }
+
+    /**
      * 400, not 401: the client must not read a wrong code as an expired session - its
      * interceptor signs out on a 401 from anywhere but the auth paths.
      */

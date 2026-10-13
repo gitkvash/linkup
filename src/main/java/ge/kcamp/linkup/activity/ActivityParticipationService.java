@@ -6,6 +6,7 @@ import ge.kcamp.linkup.activity.entity.Activity;
 import ge.kcamp.linkup.activity.entity.Participant;
 import ge.kcamp.linkup.activity.entity.ParticipantId;
 import ge.kcamp.linkup.activity.enums.ParticipantStatus;
+import ge.kcamp.linkup.activity.exception.ActivityFullException;
 import ge.kcamp.linkup.activity.exception.ActivityNotVisibleException;
 import ge.kcamp.linkup.activity.query.ActivityQueryRepository;
 import ge.kcamp.linkup.activity.repository.ActivityRepository;
@@ -58,11 +59,13 @@ public class ActivityParticipationService {
 
     /**
      * Marks the caller as going. Idempotent: joining twice, or joining something you
-     * were invited to, both end as JOINED.
+     * were invited to, both end as JOINED. A full plan refuses anyone not already in it
+     * with {@link ActivityFullException}.
      */
     @Transactional
     public ParticipantStatus join(UUID activityId, UUID userId) {
-        requireVisible(activityId, userId);
+        Activity activity = requireVisible(activityId, userId);
+        requireRoom(activity, userId);
         ParticipantStatus status = upsert(activityId, userId, ParticipantStatus.JOINED);
         eventPublisher.publishEvent(new ActivityChangedEvent(activityId, Instant.now()));
         return status;
@@ -110,6 +113,10 @@ public class ActivityParticipationService {
             previousReason = before == null ? null : before.getDeclineReason();
         }
 
+        if (going) {
+            requireRoom(activity, userId);
+        }
+
         ParticipantStatus status;
         if (going || trimmed.isEmpty()) {
             status = upsert(
@@ -127,6 +134,22 @@ public class ActivityParticipationService {
                     activityId, activity.getCreatorId(), userId, activity.getTitle(),
                     trimmed.isEmpty() ? null : trimmed, now));
         }
+        return status;
+    }
+
+    /**
+     * "Might come": answers an invitation, or a public plan, without taking a place. The host
+     * cannot - hosting is going - and 400 says so. Idempotent. Clears an earlier decline's
+     * reason, like any other change of answer.
+     */
+    @Transactional
+    public ParticipantStatus maybe(UUID activityId, UUID userId) {
+        Activity activity = requireVisible(activityId, userId);
+        if (activity.getCreatorId().equals(userId)) {
+            throw new IllegalArgumentException("You're hosting this plan, so you're going.");
+        }
+        ParticipantStatus status = upsert(activityId, userId, ParticipantStatus.MAYBE);
+        eventPublisher.publishEvent(new ActivityChangedEvent(activityId, Instant.now()));
         return status;
     }
 
@@ -236,6 +259,32 @@ public class ActivityParticipationService {
     }
 
     /**
+     * Fails with {@link ActivityFullException} when the plan has a cap, it is reached, and the
+     * caller isn't one of the people already counted in it.
+     * <p>
+     * The lock is taken before the count and held to the end of the transaction, so the
+     * count-then-insert is one step as far as any other join is concerned. Plans without a
+     * cap skip it, and never contend.
+     */
+    private void requireRoom(Activity activity, UUID userId) {
+        Integer max = activity.getMaxParticipants();
+        if (max == null) {
+            return;
+        }
+        UUID activityId = activity.getId();
+        participantRepository.lockPlan(activityId.toString());
+        boolean alreadyIn = participantRepository.findByIdActivityIdAndIdUserId(activityId, userId)
+                .map(participant -> participant.getStatus() == ParticipantStatus.JOINED)
+                .orElse(false);
+        if (alreadyIn) {
+            return;
+        }
+        if (participantRepository.countByIdActivityIdAndStatus(activityId, ParticipantStatus.JOINED) >= max) {
+            throw new ActivityFullException();
+        }
+    }
+
+    /**
      * One statement, so two simultaneous joins settle on the same answer instead of one
      * of them losing a primary-key race - see {@code ParticipantRepository.upsertStatus}.
      */
@@ -246,10 +295,11 @@ public class ActivityParticipationService {
 
     /**
      * Loads the activity only if the caller may see it. The visibility check runs
-     * through the query repository so there is exactly one definition of "visible".
+     * through the query repository so there is exactly one definition of "visible" - as
+     * an EXISTS, not the full feed projection, which was built here only to be thrown away.
      */
     private Activity requireVisible(UUID activityId, UUID userId) {
-        if (activityQueryRepository.findById(activityId, userId).isEmpty()) {
+        if (!activityQueryRepository.isVisible(activityId, userId)) {
             throw new ActivityNotVisibleException();
         }
         return activityRepository.findById(activityId)

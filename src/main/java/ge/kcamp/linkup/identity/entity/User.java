@@ -44,6 +44,16 @@ public class User {
     @Column(name = "email", length = 254, unique = true)
     private String email;
 
+    /**
+     * The edition of the Terms and Privacy Policy this person last agreed to, and when (V42).
+     * Both null for an account that predates them and has not agreed since.
+     */
+    @Column(name = "terms_version", length = 20)
+    private String termsVersion;
+
+    @Column(name = "terms_accepted_at")
+    private ZonedDateTime termsAcceptedAt;
+
     @Column(name = "created_at", insertable = false, updatable = false)
     private ZonedDateTime createdAt;
 }

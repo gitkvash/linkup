@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import java.time.Instant;
 import java.util.Optional;
@@ -50,7 +51,8 @@ class PasswordResetServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PasswordResetService(users, codes, refreshTokens, encoder, mailer);
+        service = new PasswordResetService(
+                users, codes, refreshTokens, encoder, mailer, mock(PlatformTransactionManager.class));
         user = new User();
         user.setId(UUID.randomUUID());
         user.setUsername("nino");

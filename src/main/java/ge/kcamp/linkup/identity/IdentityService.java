@@ -17,15 +17,28 @@ import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZonedDateTime;
 import java.util.Optional;
 import java.util.UUID;
 
+/**
+ * Sign-up, sign-in and sessions.
+ * <p>
+ * {@link #register}, {@link #login} and {@link #loginWithGoogle} are not
+ * {@code @Transactional}: each does its slow part - a BCrypt hash or comparison (~100 ms of
+ * CPU), or a call out to Google - before opening the short transaction that writes the
+ * account and session, through {@link #transactions}. Annotated, the whole method held a
+ * pooled connection (the app pool is small) for work that touches no database, so a burst of
+ * sign-ins queued every other request behind it.
+ */
 @Service
 public class IdentityService {
 
@@ -59,6 +72,7 @@ public class IdentityService {
     private final JwtUtil jwtUtil;
     private final GoogleTokenVerifier googleTokenVerifier;
     private final LoginAttemptLimiter loginAttemptLimiter;
+    private final TransactionTemplate transactions;
     private final SecureRandom random = new SecureRandom();
 
     /**
@@ -79,21 +93,25 @@ public class IdentityService {
             PasswordEncoder passwordEncoder,
             JwtUtil jwtUtil,
             GoogleTokenVerifier googleTokenVerifier,
-            LoginAttemptLimiter loginAttemptLimiter) {
+            LoginAttemptLimiter loginAttemptLimiter,
+            PlatformTransactionManager transactionManager) {
         this.userRepository = userRepository;
         this.refreshTokenRepository = refreshTokenRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtUtil = jwtUtil;
         this.googleTokenVerifier = googleTokenVerifier;
         this.loginAttemptLimiter = loginAttemptLimiter;
+        this.transactions = new TransactionTemplate(transactionManager);
         this.dummyPasswordHash = passwordEncoder.encode(UUID.randomUUID().toString());
     }
 
     /**
      * @param email where a password-reset code will go; null or blank for none
+     * @param termsVersion the edition of the Terms and Privacy Policy the person agreed to;
+     *        anything but the current one is refused before any account work is done
      */
-    @Transactional
-    public AuthResponse register(String username, String rawPassword, String email) {
+    public AuthResponse register(String username, String rawPassword, String email, String termsVersion) {
+        LegalDocuments.requireCurrent(termsVersion);
         requirePasswordFitsBcrypt(rawPassword);
 
         // Case-insensitively, so "Alice" cannot be registered alongside "alice" - the
@@ -106,27 +124,34 @@ public class IdentityService {
             throw new DuplicateEmailException();
         }
 
-        User user = new User();
-        user.setUsername(username);
-        user.setPasswordHash(passwordEncoder.encode(rawPassword));
-        user.setEmail(normalizedEmail);
+        // Hashed before the transaction opens. The checks above are only the fast answer for
+        // the common case; the unique constraints still decide a race below.
+        String passwordHash = passwordEncoder.encode(rawPassword);
 
-        User saved;
-        try {
-            // saveAndFlush, not save: the unique-constraint violation has to surface
-            // here rather than at commit, or two simultaneous registrations of the
-            // same username escape this method and become a generic 500.
-            saved = userRepository.saveAndFlush(user);
-        } catch (DataIntegrityViolationException e) {
-            // Two unique keys can have raced; say which one lost. Read off the constraint
-            // name, not re-queried: the transaction is already aborted on Postgres's side.
-            if (String.valueOf(e.getMostSpecificCause().getMessage()).contains("ux_users_email")) {
-                throw new DuplicateEmailException();
+        return transactions.execute(status -> {
+            User user = new User();
+            user.setUsername(username);
+            user.setPasswordHash(passwordHash);
+            user.setEmail(normalizedEmail);
+            recordAgreement(user, termsVersion);
+
+            User saved;
+            try {
+                // saveAndFlush, not save: the unique-constraint violation has to surface
+                // here rather than at commit, or two simultaneous registrations of the
+                // same username escape this method and become a generic 500.
+                saved = userRepository.saveAndFlush(user);
+            } catch (DataIntegrityViolationException e) {
+                // Two unique keys can have raced; say which one lost. Read off the constraint
+                // name, not re-queried: the transaction is already aborted on Postgres's side.
+                if (String.valueOf(e.getMostSpecificCause().getMessage()).contains("ux_users_email")) {
+                    throw new DuplicateEmailException();
+                }
+                throw new DuplicateUsernameException();
             }
-            throw new DuplicateUsernameException();
-        }
 
-        return issueToken(saved, true);
+            return issueToken(saved, true);
+        });
     }
 
     /**
@@ -143,9 +168,9 @@ public class IdentityService {
     /**
      * One generic failure for every way this can go wrong, and one BCrypt comparison on
      * every path to it - see {@link #dummyPasswordHash}. Not read-only any more: signing in
-     * writes the new refresh token's row.
+     * writes the new refresh token's row, in a transaction opened only once the comparison
+     * has passed.
      */
-    @Transactional
     public AuthResponse login(String username, String rawPassword) {
         loginAttemptLimiter.check(username);
 
@@ -157,18 +182,31 @@ public class IdentityService {
         if (storedHash == null || !matches) {
             throw new AuthenticationFailedException();
         }
-        return issueToken(user.get(), false);
+        return transactions.execute(status -> issueToken(user.get(), false));
     }
 
-    @Transactional
-    public AuthResponse loginWithGoogle(String idToken) {
+    /**
+     * @param termsVersion needed only when this sign-in would create the account. The check
+     *        comes after the token is verified (so it cannot be used to probe anything
+     *        without a real Google identity) and before the row is written, so a person who
+     *        has not agreed leaves nothing behind.
+     *        <p>
+     *        The token is verified before the transaction opens: verifying can mean a
+     *        network call for Google's signing keys, which must not hold a connection.
+     */
+    public AuthResponse loginWithGoogle(String idToken, String termsVersion) {
         GoogleTokenVerifier.Result verified = googleTokenVerifier.verify(idToken);
-        Optional<User> existing = userRepository.findByGoogleId(verified.subject());
-        User user = existing.orElseGet(() -> createGoogleUser(verified));
-        // Only the first time. The generated username is a placeholder, and the client
-        // turns this flag into one chance to replace it - on every sign-in it would be
-        // a form standing between the user and the app.
-        return issueToken(user, existing.isEmpty());
+        return transactions.execute(status -> {
+            Optional<User> existing = userRepository.findByGoogleId(verified.subject());
+            if (existing.isEmpty()) {
+                LegalDocuments.requireCurrent(termsVersion);
+            }
+            User user = existing.orElseGet(() -> createGoogleUser(verified, termsVersion));
+            // Only the first time. The generated username is a placeholder, and the client
+            // turns this flag into one chance to replace it - on every sign-in it would be
+            // a form standing between the user and the app.
+            return issueToken(user, existing.isEmpty());
+        });
     }
 
     /**
@@ -254,8 +292,14 @@ public class IdentityService {
         throw new SessionExpiredException();
     }
 
-    private User createGoogleUser(GoogleTokenVerifier.Result verified) {
+    private static void recordAgreement(User user, String termsVersion) {
+        user.setTermsVersion(termsVersion);
+        user.setTermsAcceptedAt(ZonedDateTime.now());
+    }
+
+    private User createGoogleUser(GoogleTokenVerifier.Result verified, String termsVersion) {
         User user = new User();
+        recordAgreement(user, termsVersion);
         user.setGoogleId(verified.subject());
         user.setUsername(generateUniqueUsername());
         // passwordHash is left null - a Google-only account authenticates by

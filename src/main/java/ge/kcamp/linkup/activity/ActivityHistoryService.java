@@ -1,5 +1,6 @@
 package ge.kcamp.linkup.activity;
 
+import ge.kcamp.linkup.activity.enums.ActivityCategory;
 import ge.kcamp.linkup.activity.enums.ActivityStatus;
 import ge.kcamp.linkup.activity.query.ActivityHistoryRepository;
 import ge.kcamp.linkup.activity.query.ActivityQueryRepository;
@@ -7,9 +8,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -69,6 +72,40 @@ public class ActivityHistoryService {
      */
     public List<ActivityFeedItem> happenedBetween(UUID personId, UUID viewerId, Instant from, Instant to) {
         return happened(historyRepository.findTookPartBetween(personId, viewerId, from, to), viewerId);
+    }
+
+    /**
+     * How many plans the two both took part in that happened: {@link #happenedTogether}'s
+     * size, without reading the plans themselves.
+     */
+    public long countHappenedTogether(UUID viewerId, UUID otherId) {
+        if (viewerId.equals(otherId)) {
+            return 0;
+        }
+        ZonedDateTime now = ZonedDateTime.now();
+        return historyRepository.findStartedTogetherResolvable(viewerId, otherId).stream()
+                .filter(candidate -> happened(candidate, now))
+                .count();
+    }
+
+    /**
+     * {@link #happenedBetween}, counted by category - for "their go-to", which needs no
+     * more than that.
+     */
+    public Map<ActivityCategory, Long> happenedByCategory(UUID personId, UUID viewerId, Instant from, Instant to) {
+        ZonedDateTime now = ZonedDateTime.now();
+        Map<ActivityCategory, Long> counts = new EnumMap<>(ActivityCategory.class);
+        for (ActivityHistoryRepository.Resolvable candidate
+                : historyRepository.findTookPartBetweenResolvable(personId, viewerId, from, to)) {
+            if (happened(candidate, now)) {
+                counts.merge(candidate.category(), 1L, Long::sum);
+            }
+        }
+        return counts;
+    }
+
+    private static boolean happened(ActivityHistoryRepository.Resolvable candidate, ZonedDateTime now) {
+        return ActivityStatusResolver.resolve(candidate.lifecycle(), now) == ActivityStatus.ENDED;
     }
 
     /** Everyone else who was in each of these plans, by plan. Plans with nobody else are absent. */

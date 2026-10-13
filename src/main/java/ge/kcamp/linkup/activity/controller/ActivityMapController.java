@@ -3,6 +3,7 @@ package ge.kcamp.linkup.activity.controller;
 import ge.kcamp.linkup.activity.dto.BoundingBox;
 import ge.kcamp.linkup.activity.dto.MapMarkerDto;
 import ge.kcamp.linkup.activity.dto.MapSearchResultDto;
+import ge.kcamp.linkup.activity.enums.ActivityCategory;
 import ge.kcamp.linkup.activity.repository.ActivityMapRepository;
 import ge.kcamp.linkup.activity.web.ZoomClusterResolver;
 import ge.kcamp.linkup.UserContext;
@@ -10,11 +11,13 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.Instant;
 import java.util.List;
 
 // No @Validated: Spring 6.1+ applies built-in method validation to constrained
@@ -38,6 +41,10 @@ public class ActivityMapController {
      * {@code epsOverride}/{@code minPointsOverride} query parameters were unvalidated
      * and fed straight into PostGIS (a caller could ask for {@code minPoints=0} or a
      * negative radius); no client ever sent them.
+     * <p>
+     * {@code category} (repeatable) and {@code from}/{@code to} narrow what is drawn, and are
+     * applied before clustering so a cluster's count and position only reflect what passed -
+     * see {@link ActivityMapRepository.Filter}. All three are optional; none is none.
      */
     @GetMapping
     public List<MapMarkerDto> getMarkers(
@@ -45,15 +52,22 @@ public class ActivityMapController {
             @RequestParam double minLng,
             @RequestParam double maxLat,
             @RequestParam double maxLng,
-            @RequestParam @Min(0) @Max(22) int zoom) {
+            @RequestParam @Min(0) @Max(22) int zoom,
+            @RequestParam(required = false) @Size(max = 20) List<ActivityCategory> category,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to) {
 
+        if (from != null && to != null && !to.isAfter(from)) {
+            throw new IllegalArgumentException("to must be after from");
+        }
         BoundingBox bbox = new BoundingBox(minLat, minLng, maxLat, maxLng);
         bbox.validate();
 
         ZoomClusterResolver.ClusterParams params = zoomClusterResolver.resolve(zoom);
 
         return activityMapRepository.findClusteredMarkers(
-                bbox, params.epsMeters(), params.minPoints(), UserContext.getUserId());
+                bbox, params.epsMeters(), params.minPoints(), UserContext.getUserId(),
+                new ActivityMapRepository.Filter(category, from, to));
     }
 
     /**

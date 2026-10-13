@@ -20,11 +20,13 @@ import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -53,7 +55,8 @@ public class ActivityQueryRepository {
                    (SELECT vs.status FROM participants vs
                      WHERE vs.activity_id = a.activity_id AND vs.user_id = :viewerId) AS viewer_status,
                    a.group_id, g.group_name,
-                   a.repeat_freq, a.repeat_interval, a.repeat_until
+                   a.repeat_freq, a.repeat_interval, a.repeat_until,
+                   a.description, a.meeting_point, a.max_participants
             FROM activities a
             LEFT JOIN locations l ON l.activity_id = a.activity_id
             LEFT JOIN groups g ON g.group_id = a.group_id
@@ -77,6 +80,41 @@ public class ActivityQueryRepository {
         params.put(ActivityVisibilitySql.VIEWER_ID_PARAM, requireViewer(viewerId));
 
         return jdbcTemplate.query(sql, params, ActivityQueryRepository::mapRow).stream().findFirst();
+    }
+
+    /**
+     * Whether the plan exists and the viewer may see it, without building the projection:
+     * the cheap form of {@code findById(...).isPresent()} for callers that only need the
+     * answer.
+     */
+    public boolean isVisible(UUID activityId, UUID viewerId) {
+        String sql = "SELECT EXISTS (SELECT 1 FROM activities a WHERE a.activity_id = :activityId AND "
+                + ActivityVisibilitySql.VISIBLE_TO_VIEWER + ")";
+
+        Map<String, Object> params = new HashMap<>();
+        params.put("activityId", activityId);
+        params.put(ActivityVisibilitySql.VIEWER_ID_PARAM, requireViewer(viewerId));
+
+        return Boolean.TRUE.equals(jdbcTemplate.queryForObject(sql, params, Boolean.class));
+    }
+
+    /**
+     * Which of these plans still exist and are visible to the viewer - ids only, for
+     * pruning a feed timeline without reading the projection. No row cap: the caller
+     * bounds the list.
+     */
+    public Set<UUID> findVisibleIds(Collection<UUID> activityIds, UUID viewerId) {
+        if (activityIds.isEmpty()) {
+            return Set.of();
+        }
+        String sql = "SELECT a.activity_id FROM activities a WHERE a.activity_id IN (:activityIds) AND "
+                + ActivityVisibilitySql.VISIBLE_TO_VIEWER;
+
+        Map<String, Object> params = new HashMap<>();
+        params.put("activityIds", activityIds);
+        params.put(ActivityVisibilitySql.VIEWER_ID_PARAM, requireViewer(viewerId));
+
+        return new HashSet<>(jdbcTemplate.queryForList(sql, params, UUID.class));
     }
 
     /**
@@ -262,7 +300,11 @@ public class ActivityQueryRepository {
                                 startedAt == null ? null : startedAt.toZonedDateTime(),
                                 endedAt == null ? null : endedAt.toZonedDateTime(),
                                 cancelledAt == null ? null : cancelledAt.toZonedDateTime()),
-                        ZonedDateTime.now())
+                        ZonedDateTime.now()),
+                rs.getString("description"),
+                rs.getString("meeting_point"),
+                // getInt() answers 0 for SQL NULL, and "limit 0" is not "no limit".
+                rs.getObject("max_participants") == null ? null : rs.getInt("max_participants")
         );
     }
 }

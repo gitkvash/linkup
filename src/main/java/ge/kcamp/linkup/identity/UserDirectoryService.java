@@ -9,12 +9,11 @@ import java.time.Instant;
 import java.time.ZonedDateTime;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
@@ -29,8 +28,14 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true)
 public class UserDirectoryService {
 
-    /** Cap on a search or batch lookup, so one request can't ask for everything. */
+    /** Cap on a username search, so one request can't ask for everything. */
     private static final int MAX_RESULTS = 50;
+
+    /**
+     * Ids per {@code IN (...)} query in {@link #findByIds}. Not a cap: every id is looked
+     * up, in as many queries as it takes, so a long bind list stays bounded.
+     */
+    private static final int LOOKUP_CHUNK = 500;
 
     /** Below this, a search would match most of the table. */
     private static final int MIN_QUERY_LENGTH = 2;
@@ -58,19 +63,25 @@ public class UserDirectoryService {
     /**
      * Batch lookup, returned as a map so callers can decorate a list of ids without
      * an N+1. Ids that don't exist are simply absent.
+     * <p>
+     * Uncapped on purpose. This is what every in-process list decorates itself with - a
+     * friends list, a group's members, a plan's participants, a feed page of ~200 ids - and
+     * a cap here (it used to stop at 50, before de-duplicating) silently left everyone past
+     * it nameless. The public {@code GET /users?ids=} bounds its own input instead.
      */
     public Map<UUID, UserSummary> findByIds(Collection<UUID> userIds) {
         if (userIds.isEmpty()) {
             return Map.of();
         }
-        Set<UUID> distinct = userIds.stream().limit(MAX_RESULTS).collect(Collectors.toSet());
-        return userRepository.findAllById(distinct).stream()
-                .map(UserDirectoryService::toSummary)
-                .collect(Collectors.toMap(
-                        UserSummary::userId,
-                        Function.identity(),
-                        (first, second) -> first,
-                        LinkedHashMap::new));
+        List<UUID> distinct = List.copyOf(new LinkedHashSet<>(userIds));
+        Map<UUID, UserSummary> found = new LinkedHashMap<>();
+        for (int from = 0; from < distinct.size(); from += LOOKUP_CHUNK) {
+            List<UUID> chunk = distinct.subList(from, Math.min(from + LOOKUP_CHUNK, distinct.size()));
+            for (ge.kcamp.linkup.identity.entity.User user : userRepository.findAllById(chunk)) {
+                found.putIfAbsent(user.getId(), toSummary(user));
+            }
+        }
+        return found;
     }
 
     /**

@@ -13,7 +13,7 @@ JSON='Content-Type: application/json'
 
 STAMP="$$_$(date +%s)"
 A="ga_$STAMP"; B="gb_$STAMP"; C="gc_$STAMP"
-reg() { curl -s -X POST "$API/auth/register" -H "$JSON" -d "{\"username\":\"$1\",\"password\":\"password123\"}"; }
+reg() { curl -s -X POST "$API/auth/register" -H "$JSON" -d "{\"username\":\"$1\",\"password\":\"password123\",\"termsVersion\":\"2026-10-13\"}"; }
 
 echo "== setup: owner, member, outsider =="
 RA=$(reg "$A"); RB=$(reg "$B"); RC=$(reg "$C")

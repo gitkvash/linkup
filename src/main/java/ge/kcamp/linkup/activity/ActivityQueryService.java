@@ -9,6 +9,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -31,6 +32,14 @@ public class ActivityQueryService {
     /** Empty when the activity doesn't exist <em>or</em> the viewer may not see it. */
     public Optional<ActivityFeedItem> findById(UUID activityId, UUID viewerId) {
         return activityQueryRepository.findById(activityId, viewerId);
+    }
+
+    /**
+     * The subset of {@code activityIds} that still exist and the viewer may see. Ids only,
+     * for the feed to prune a timeline after the viewer lost access to some of it.
+     */
+    public Set<UUID> findVisibleIds(Collection<UUID> activityIds, UUID viewerId) {
+        return activityQueryRepository.findVisibleIds(activityIds, viewerId);
     }
 
     public List<ActivityFeedItem> findByIds(List<UUID> activityIds, UUID viewerId) {

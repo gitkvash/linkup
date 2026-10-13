@@ -158,6 +158,7 @@ class FeedQueryServiceTest {
     private ActivityFeedItem item(UUID id, long participantCount, ZonedDateTime start) {
         return new ActivityFeedItem(id, creator, "cara", "Cara", "Dinner", ActivityType.SPECIFIC_EVENT,
                 ActivityVisibility.PUBLIC, start, null, true, "Somewhere", null, null, participantCount,
-                null, null, null, ActivityCategory.FOOD_AND_DRINK, null, null, null, ActivityStatus.UPCOMING);
+                null, null, null, ActivityCategory.FOOD_AND_DRINK, null, null, null, ActivityStatus.UPCOMING,
+                null, null, null);
     }
 }

@@ -3,9 +3,12 @@ package ge.kcamp.linkup.identity.controller;
 import ge.kcamp.linkup.UserContext;
 import ge.kcamp.linkup.identity.AccountDeletionService;
 import ge.kcamp.linkup.identity.ProfileService;
+import ge.kcamp.linkup.identity.TermsService;
 import ge.kcamp.linkup.identity.UserDirectoryService;
 import ge.kcamp.linkup.identity.UserSummary;
+import ge.kcamp.linkup.identity.dto.AcceptTermsRequest;
 import ge.kcamp.linkup.identity.dto.EmailResponse;
+import ge.kcamp.linkup.identity.dto.TermsStatusResponse;
 import ge.kcamp.linkup.identity.dto.UpdateEmailRequest;
 import ge.kcamp.linkup.identity.dto.UpdateProfileRequest;
 import jakarta.validation.Valid;
@@ -29,17 +32,23 @@ import java.util.UUID;
 @RequestMapping("/api/v1/users")
 public class UserController {
 
+    /** Most distinct ids one {@code GET /users?ids=} looks up. */
+    private static final int MAX_BATCH_IDS = 50;
+
     private final UserDirectoryService userDirectoryService;
     private final ProfileService profileService;
     private final AccountDeletionService accountDeletionService;
+    private final TermsService termsService;
 
     public UserController(
             UserDirectoryService userDirectoryService,
             ProfileService profileService,
-            AccountDeletionService accountDeletionService) {
+            AccountDeletionService accountDeletionService,
+            TermsService termsService) {
         this.userDirectoryService = userDirectoryService;
         this.profileService = profileService;
         this.accountDeletionService = accountDeletionService;
+        this.termsService = termsService;
     }
 
     /** Who am I - lets the client confirm its stored session against the server. */
@@ -81,6 +90,22 @@ public class UserController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
+    /** Which edition of the Terms and Privacy Policy is current, and which the caller agreed to. */
+    @GetMapping("/me/terms")
+    public ResponseEntity<TermsStatusResponse> myTerms() {
+        return termsService.status(UserContext.getUserId())
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    /** Agree to the current edition. 428 {@code TERMS_REQUIRED} for any other version. */
+    @PutMapping("/me/terms")
+    public ResponseEntity<TermsStatusResponse> acceptTerms(@Valid @RequestBody AcceptTermsRequest request) {
+        return termsService.accept(UserContext.getUserId(), request.version())
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
     /**
      * Delete your own account and everything in it, for good. Like {@link #updateMe}, the
      * id comes from the token: there is no way to name anyone else's. A second call after
@@ -107,12 +132,15 @@ public class UserController {
 
     /**
      * Batch lookup for decorating a list of ids in one request - the friends list,
-     * participants, notification actors.
+     * participants, notification actors. Looks up at most {@value #MAX_BATCH_IDS}
+     * distinct ids, so one request can't ask for everything; the in-process lookup it
+     * calls is deliberately uncapped.
      */
     @GetMapping
     public ResponseEntity<List<UserSummary>> byIds(@RequestParam List<UUID> ids) {
+        List<UUID> bounded = ids.stream().distinct().limit(MAX_BATCH_IDS).toList();
         return ResponseEntity.ok(
-                List.copyOf(userDirectoryService.findByIds(ids).values()));
+                List.copyOf(userDirectoryService.findByIds(bounded).values()));
     }
 
     @GetMapping("/{userId}")

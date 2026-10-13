@@ -40,6 +40,10 @@ import java.util.UUID;
  * @param repeatUntil     when the repetition stops, or null for no end date.
  * @param category null (or omitted) leaves the activity's current category unchanged -
  *                 see {@code UpdateActivityCommand}.
+ * @param description     fully replaced like the other fields: null or blank clears the note.
+ * @param meetingPoint    fully replaced: null or blank clears it.
+ * @param maxParticipants fully replaced: null lifts the cap. Refused with a 400 when lower
+ *                        than the number of people already going.
  */
 public record UpdateActivityRequest(
         @NotBlank @Size(max = 255) String title,
@@ -54,8 +58,27 @@ public record UpdateActivityRequest(
         ActivityCategory category,
         RepeatFrequency repeatFrequency,
         @Min(1) @Max(52) Integer repeatInterval,
-        ZonedDateTime repeatUntil
+        ZonedDateTime repeatUntil,
+        @Size(max = MAX_DESCRIPTION) String description,
+        @Size(max = MAX_MEETING_POINT) String meetingPoint,
+        @Min(2) @Max(MAX_PARTICIPANTS_CEILING) Integer maxParticipants
 ) {
+    /** The column widths of {@code activities.description} and {@code activities.meeting_point}. */
+    public static final int MAX_DESCRIPTION = 500;
+    public static final int MAX_MEETING_POINT = 120;
+
+    /** A plan among friends; the ceiling only stops a typo like 10000 from reading as "no limit". */
+    public static final int MAX_PARTICIPANTS_CEILING = 500;
+
+    /** Blank and absent are the same: no note. */
+    public String resolvedDescription() {
+        return description == null || description.isBlank() ? null : description.strip();
+    }
+
+    public String resolvedMeetingPoint() {
+        return meetingPoint == null || meetingPoint.isBlank() ? null : meetingPoint.strip();
+    }
+
     public boolean resolvedHasTime() {
         return hasTime == null || hasTime;
     }

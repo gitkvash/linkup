@@ -23,6 +23,12 @@ public record RegisterRequest(
          * Where a password-reset code will go. Optional so a client that predates it still
          * registers - and blank counts as absent - but an account without one cannot reset.
          */
-        @Email @Size(max = 254) String email
+        @Email @Size(max = 254) String email,
+        /**
+         * The edition of the Terms and Privacy Policy the person ticked. Required and
+         * checked against {@code LegalDocuments.CURRENT_VERSION} in the service: ticking is
+         * agreeing to the age minimum as well, so there is no account without it.
+         */
+        @NotBlank @Size(max = 20) String termsVersion
 ) {
 }

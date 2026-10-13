@@ -41,6 +41,8 @@ public final class ApiError {
     public static final String EMAIL_TAKEN = "EMAIL_TAKEN";
     /** 400: every way a password reset can fail - deliberately one code, see PasswordResetService. */
     public static final String INVALID_RESET_CODE = "INVALID_RESET_CODE";
+    /** 428: an account would be made without agreement to the current Terms and Privacy Policy. */
+    public static final String TERMS_REQUIRED = "TERMS_REQUIRED";
     /** 429, always sent with {@code Retry-After}. */
     public static final String RATE_LIMITED = "RATE_LIMITED";
 

@@ -74,4 +74,29 @@ public class CompositeNotificationDispatcher implements NotificationDispatcher {
             }
         }
     }
+
+    /**
+     * {@link #dispatch(NotificationMessage, Instant)} for one event's many recipients - a
+     * group plan, a cancellation, a reminder - with the same rules: every row is written
+     * first, in one transaction, and only the ones that were new are pushed. One FCM
+     * {@code sendEach} for all of them, where a member at a time was a round trip to
+     * Google each. A failed insert writes none of the rows, so the retry starts clean.
+     */
+    public void dispatchAll(List<NotificationMessage> messages, Instant occurredAt) {
+        if (messages.isEmpty()) {
+            return;
+        }
+        List<NotificationMessage> fresh = store.recordAll(messages, occurredAt);
+        if (fresh.isEmpty()) {
+            return;
+        }
+        for (NotificationDispatcher channel : channels) {
+            try {
+                channel.dispatchAll(fresh);
+            } catch (RuntimeException e) {
+                log.warn("Notification channel {} failed for {} recipient(s): {}",
+                        channel.getClass().getSimpleName(), fresh.size(), e.getMessage());
+            }
+        }
+    }
 }

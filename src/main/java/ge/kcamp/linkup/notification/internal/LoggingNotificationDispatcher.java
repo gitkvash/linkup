@@ -10,6 +10,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Types;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -71,23 +73,55 @@ public class LoggingNotificationDispatcher {
      */
     @Transactional
     public boolean record(NotificationMessage message, Instant occurredAt) {
-        String dedupeKey = dedupeKeyFor(message, occurredAt);
+        if (jdbcTemplate.update(INSERT_IF_ABSENT, paramsFor(message, occurredAt)) == 0) {
+            log.debug("Skipping duplicate notification {}", dedupeKeyFor(message, occurredAt));
+            return false;
+        }
+        log.info("Notification for {}: [{}] {}", message.recipientUserId(), message.type(), message.title());
+        return true;
+    }
 
-        MapSqlParameterSource params = new MapSqlParameterSource()
+    /**
+     * {@link #record} for many messages, as one JDBC batch in one transaction. Same
+     * failure rule: an exception propagates, and none of the rows are kept.
+     *
+     * @return the messages whose row was written, in order; duplicates are left out
+     */
+    @Transactional
+    public List<NotificationMessage> recordAll(List<NotificationMessage> messages, Instant occurredAt) {
+        if (messages.isEmpty()) {
+            return List.of();
+        }
+        MapSqlParameterSource[] batch = messages.stream()
+                .map(message -> paramsFor(message, occurredAt))
+                .toArray(MapSqlParameterSource[]::new);
+        int[] counts = jdbcTemplate.batchUpdate(INSERT_IF_ABSENT, batch);
+
+        List<NotificationMessage> written = new ArrayList<>();
+        for (int i = 0; i < messages.size(); i++) {
+            // 0 is a dedupe. Anything else counts as written - including the driver's
+            // "succeeded, count unknown", where a rare second push beats a lost one.
+            if (i >= counts.length || counts[i] != 0) {
+                NotificationMessage message = messages.get(i);
+                log.info("Notification for {}: [{}] {}", message.recipientUserId(), message.type(), message.title());
+                written.add(message);
+            }
+        }
+        if (written.size() < messages.size()) {
+            log.debug("Skipped {} duplicate notification(s)", messages.size() - written.size());
+        }
+        return written;
+    }
+
+    private static MapSqlParameterSource paramsFor(NotificationMessage message, Instant occurredAt) {
+        return new MapSqlParameterSource()
                 .addValue("id", UUID.randomUUID(), Types.OTHER)
                 .addValue("recipientUserId", message.recipientUserId(), Types.OTHER)
                 .addValue("type", message.type(), Types.VARCHAR)
                 .addValue("title", message.title(), Types.VARCHAR)
                 .addValue("body", message.body(), Types.VARCHAR)
-                .addValue("dedupeKey", dedupeKey, Types.VARCHAR)
+                .addValue("dedupeKey", dedupeKeyFor(message, occurredAt), Types.VARCHAR)
                 .addValue("activityId", activityIdOf(message), Types.OTHER);
-
-        if (jdbcTemplate.update(INSERT_IF_ABSENT, params) == 0) {
-            log.debug("Skipping duplicate notification {}", dedupeKey);
-            return false;
-        }
-        log.info("Notification for {}: [{}] {}", message.recipientUserId(), message.type(), message.title());
-        return true;
     }
 
     /** The {@code activityId} metadata entry, if there is one and it is a UUID. */

@@ -1,7 +1,10 @@
 package ge.kcamp.linkup.activity;
 
+import ge.kcamp.linkup.activity.enums.ActivityVisibility;
+
 import java.time.Instant;
 import java.time.ZonedDateTime;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -14,12 +17,19 @@ import java.util.UUID;
  * @param groupId the group a {@code GROUP}-visibility plan is shared with after the edit,
  *                null for any other visibility - the same meaning as on
  *                {@link ActivityCreatedEvent}.
+ * @param visibility     who may see the plan after the edit; null only on an event
+ *                       recorded before this field existed
+ * @param participantIds everyone with a participant row, whatever its status - a PRIVATE
+ *                       plan's whole audience besides the host. Captured here because the
+ *                       listener runs later, on another thread.
  */
 public record ActivityUpdatedEvent(
         UUID activityId,
         UUID creatorId,
         ZonedDateTime startTime,
         UUID groupId,
+        ActivityVisibility visibility,
+        List<UUID> participantIds,
         Instant occurredAt
 ) {
 }

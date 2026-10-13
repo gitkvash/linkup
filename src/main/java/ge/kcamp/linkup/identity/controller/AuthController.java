@@ -29,7 +29,8 @@ public class AuthController {
 
     @PostMapping("/register")
     public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest request) {
-        AuthResponse response = identityService.register(request.username(), request.password(), request.email());
+        AuthResponse response = identityService.register(
+                request.username(), request.password(), request.email(), request.termsVersion());
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
@@ -41,7 +42,7 @@ public class AuthController {
 
     @PostMapping("/google")
     public ResponseEntity<AuthResponse> loginWithGoogle(@Valid @RequestBody GoogleLoginRequest request) {
-        AuthResponse response = identityService.loginWithGoogle(request.idToken());
+        AuthResponse response = identityService.loginWithGoogle(request.idToken(), request.termsVersion());
         return ResponseEntity.ok(response);
     }
 

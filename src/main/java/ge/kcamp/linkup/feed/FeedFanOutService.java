@@ -2,7 +2,7 @@ package ge.kcamp.linkup.feed;
 
 import ge.kcamp.linkup.activity.ActivityFeedItem;
 import ge.kcamp.linkup.activity.ActivityQueryService;
-import ge.kcamp.linkup.activity.enums.ActivityStatus;
+import ge.kcamp.linkup.activity.enums.ActivityVisibility;
 import ge.kcamp.linkup.social.GroupService;
 import ge.kcamp.linkup.social.SocialGraphService;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,6 +12,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -54,37 +55,89 @@ class FeedFanOutService {
     }
 
     /**
-     * @param groupId set for a GROUP-visibility plan, null otherwise. Its members receive
-     *                the item instead of the creator's friends: the two lists overlap only
-     *                by coincidence, and a group is the one audience deliberately defined
-     *                as something other than a friend list. Without this branch a group
-     *                plan reached the map and a direct link but never the feed, which is
-     *                where people actually look. A friend who is not in the group would in
-     *                any case have it filtered back out on read by the visibility
-     *                predicate, so pushing to them only buys short pages.
+     * Writes a plan into the timeline of everyone it is for, scored by its start. Also
+     * the re-score after an edit: a sorted set keeps one entry per plan, so pushing again
+     * moves it rather than duplicating it.
+     *
+     * @return everyone whose timeline was written
      */
-    Set<UUID> fanOutOnWrite(UUID creatorId, UUID activityId, Instant startTime, UUID groupId) {
-        double score = FeedTimelineScore.of(activityId, startTime);
-        timelineRepository.push(creatorId, activityId, score);
-        Set<UUID> reached = new HashSet<>();
-        reached.add(creatorId);
+    Set<UUID> fanOutOnWrite(
+            UUID creatorId, UUID activityId, Instant startTime,
+            ActivityVisibility visibility, UUID groupId, Collection<UUID> participantIds) {
+        Set<UUID> audience = audienceOf(creatorId, visibility, groupId, participantIds);
+        timelineRepository.pushAll(audience, activityId, FeedTimelineScore.of(activityId, startTime));
+        return audience;
+    }
 
+    /**
+     * Takes a deleted plan out of every timeline {@link #fanOutOnWrite} put it in. The
+     * read side would drop each entry anyway once it found no row behind it, but only when
+     * that page was read, and only after a feed re-read the client had no reason to make.
+     *
+     * @return everyone whose timeline may have held it
+     */
+    Set<UUID> removeEverywhere(
+            UUID creatorId, UUID activityId,
+            ActivityVisibility visibility, UUID groupId, Collection<UUID> participantIds) {
+        Set<UUID> audience = audienceOf(creatorId, visibility, groupId, participantIds);
+        timelineRepository.removeFromAll(audience, activityId);
+        return audience;
+    }
+
+    /**
+     * Whose timeline a plan belongs in: its creator and everyone with a participant row,
+     * always (a row of any status makes a plan visible), and then by visibility:
+     * <ul>
+     *   <li>PRIVATE - nobody else. Pushing it to every friend, as this once did, was
+     *       filtered back out on read, but still woke each of them with a sync signal.</li>
+     *   <li>GROUP - the group's members instead of the creator's friends: the two lists
+     *       overlap only by coincidence, and a group is the one audience deliberately
+     *       defined as something other than a friend list. No influencer exemption -
+     *       membership is bounded by whoever was added by hand.</li>
+     *   <li>FRIENDS, PUBLIC - the creator's friends, unless the creator is an influencer,
+     *       whose plans are pulled on read instead. A null visibility (an event recorded
+     *       before it was carried) is treated the same, as it was before.</li>
+     * </ul>
+     * A friend outside the plan's audience would have it filtered back out on read by the
+     * visibility predicate in any case; this only decides who pays for the write.
+     */
+    private Set<UUID> audienceOf(
+            UUID creatorId, ActivityVisibility visibility, UUID groupId, Collection<UUID> participantIds) {
+        Set<UUID> audience = new LinkedHashSet<>();
+        audience.add(creatorId);
+        if (participantIds != null) {
+            audience.addAll(participantIds);
+        }
+        if (visibility == ActivityVisibility.PRIVATE) {
+            return audience;
+        }
         if (groupId != null) {
-            // No influencer exemption here: membership is bounded by whoever was added by
-            // hand, so there is no write-amplification tail to protect against.
-            Collection<UUID> members = groupService.memberIds(groupId);
-            timelineRepository.pushAll(members, activityId, score);
-            reached.addAll(members);
-            return reached;
+            audience.addAll(groupService.memberIds(groupId));
+            return audience;
         }
+        if (!isInfluencer(creatorId)) {
+            audience.addAll(socialGraphService.getAcceptedFriendIds(creatorId));
+        }
+        return audience;
+    }
 
-        if (isInfluencer(creatorId)) {
-            return reached;
+    /**
+     * Drops every entry in a user's timeline they may no longer see - after a friendship
+     * ended, the ex-friend's FRIENDS plans. One Redis read and one ids-only query, so
+     * the visibility rule stays the activity module's; a plan the user is still in, or
+     * shares through a group, survives as it would on read.
+     *
+     * @return whether anything was removed
+     */
+    boolean pruneInvisible(UUID userId) {
+        List<UUID> entries = timelineRepository.readAll(userId);
+        if (entries.isEmpty()) {
+            return false;
         }
-        Collection<UUID> friends = socialGraphService.getAcceptedFriendIds(creatorId);
-        timelineRepository.pushAll(friends, activityId, score);
-        reached.addAll(friends);
-        return reached;
+        Set<UUID> visible = activityQueryService.findVisibleIds(entries, userId);
+        List<UUID> gone = entries.stream().filter(id -> !visible.contains(id)).toList();
+        timelineRepository.remove(userId, gone);
+        return !gone.isEmpty();
     }
 
     /**

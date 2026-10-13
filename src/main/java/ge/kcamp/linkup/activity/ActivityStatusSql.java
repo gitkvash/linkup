@@ -31,6 +31,11 @@ public final class ActivityStatusSql {
      * midnight - the same rule the resolver uses. Not {@code date_trunc('day', ...)}:
      * that truncates in the server's zone (UTC), which ended a Tbilisi plan at 04:00 on
      * its own day.
+     * <p>
+     * The map's prefilters (V43's {@code app_activity_may_be_open}) skip any plan that
+     * function calls certainly over, before this runs. It must stay a superset of this
+     * rule: widen this - a longer window, a new way to stay on - and widen it too, in a new
+     * migration, or the plans in between silently vanish from the map.
      */
     public static final String NOT_OVER = """
             (

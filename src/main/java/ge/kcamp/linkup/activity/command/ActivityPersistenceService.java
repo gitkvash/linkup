@@ -121,7 +121,7 @@ public class ActivityPersistenceService {
 
         eventPublisher.publishEvent(new ActivityCreatedEvent(
                 saved.getId(), creatorId, saved.getTitle(), saved.getStartTime(), invitees,
-                audienceGroupId, Instant.now()));
+                audienceGroupId, visibility, Instant.now()));
 
         return saved;
     }

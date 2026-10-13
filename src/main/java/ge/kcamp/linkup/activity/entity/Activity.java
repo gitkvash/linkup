@@ -101,9 +101,26 @@ public class Activity {
     @Column(name = "repeat_until")
     private ZonedDateTime repeatUntil;
 
+    /** A note for the people coming ("bring a ball"). Null when the host wrote none. */
+    @Column(name = "description", length = 500)
+    private String description;
+
+    /** Where to find the host once there ("by the fountain"); shown, never searched. */
+    @Column(name = "meeting_point", length = 120)
+    private String meetingPoint;
+
+    /**
+     * The most people who can be JOINED at once, host included. Null means no limit. Enforced
+     * by {@link ge.kcamp.linkup.activity.ActivityParticipationService} under a per-plan lock;
+     * the database only guards the floor of 2 ({@code chk_activities_max_participants}).
+     */
+    @Column(name = "max_participants")
+    private Integer maxParticipants;
+
     public Activity() {}
 
-    public Activity(UUID id, UUID creatorId, ActivityType activityType, String title, ActivityVisibility visibility, UUID groupId, ZonedDateTime startTime, ZonedDateTime endTime, boolean hasTime, ActivityCategory category, RepeatFrequency repeatFrequency, Integer repeatInterval, ZonedDateTime repeatUntil) {
+    public Activity(UUID id, UUID creatorId, ActivityType activityType, String title, ActivityVisibility visibility, UUID groupId, ZonedDateTime startTime, ZonedDateTime endTime, boolean hasTime, ActivityCategory category, RepeatFrequency repeatFrequency, Integer repeatInterval, ZonedDateTime repeatUntil,
+                    String description, String meetingPoint, Integer maxParticipants) {
         this.id = id;
         this.creatorId = creatorId;
         this.activityType = activityType;
@@ -117,6 +134,9 @@ public class Activity {
         this.repeatFrequency = repeatFrequency;
         this.repeatInterval = repeatInterval;
         this.repeatUntil = repeatUntil;
+        this.description = description;
+        this.meetingPoint = meetingPoint;
+        this.maxParticipants = maxParticipants;
     }
 
     public static ActivityBuilder builder() {
@@ -137,6 +157,9 @@ public class Activity {
         private RepeatFrequency repeatFrequency;
         private Integer repeatInterval;
         private ZonedDateTime repeatUntil;
+        private String description;
+        private String meetingPoint;
+        private Integer maxParticipants;
 
         public ActivityBuilder id(UUID id) { this.id = id; return this; }
         public ActivityBuilder creatorId(UUID creatorId) { this.creatorId = creatorId; return this; }
@@ -152,8 +175,12 @@ public class Activity {
         public ActivityBuilder repeatInterval(Integer repeatInterval) { this.repeatInterval = repeatInterval; return this; }
         public ActivityBuilder repeatUntil(ZonedDateTime repeatUntil) { this.repeatUntil = repeatUntil; return this; }
 
+        public ActivityBuilder description(String description) { this.description = description; return this; }
+        public ActivityBuilder meetingPoint(String meetingPoint) { this.meetingPoint = meetingPoint; return this; }
+        public ActivityBuilder maxParticipants(Integer maxParticipants) { this.maxParticipants = maxParticipants; return this; }
+
         public Activity build() {
-            return new Activity(id, creatorId, activityType, title, visibility, groupId, startTime, endTime, hasTime, category, repeatFrequency, repeatInterval, repeatUntil);
+            return new Activity(id, creatorId, activityType, title, visibility, groupId, startTime, endTime, hasTime, category, repeatFrequency, repeatInterval, repeatUntil, description, meetingPoint, maxParticipants);
         }
     }
 }

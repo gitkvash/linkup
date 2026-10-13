@@ -17,6 +17,10 @@ import java.util.UUID;
  * @param category null leaves the activity's current category unchanged, unlike the
  *                 rest of this command's fields, which fully replace it - a client that
  *                 doesn't yet know about categories shouldn't reset one back to GENERAL.
+ * @param description     fully replaced like the rest: null clears the note.
+ * @param meetingPoint    fully replaced: null clears it.
+ * @param maxParticipants fully replaced: null lifts the cap. Refused when lower than the
+ *                        number of people already JOINED.
  */
 public record UpdateActivityCommand(
         UUID activityId,
@@ -33,6 +37,9 @@ public record UpdateActivityCommand(
         ActivityCategory category,
         RepeatFrequency repeatFrequency,
         Integer repeatInterval,
-        ZonedDateTime repeatUntil
+        ZonedDateTime repeatUntil,
+        String description,
+        String meetingPoint,
+        Integer maxParticipants
 ) {
 }

@@ -19,7 +19,7 @@ JSON='Content-Type: application/json'
 
 STAMP="$$_$(date +%s)"
 A="cc_a_$STAMP"; B="cc_b_$STAMP"
-reg() { curl -s -X POST "$API/auth/register" -H "$JSON" -d "{\"username\":\"$1\",\"password\":\"password123\"}"; }
+reg() { curl -s -X POST "$API/auth/register" -H "$JSON" -d "{\"username\":\"$1\",\"password\":\"password123\",\"termsVersion\":\"2026-10-13\"}"; }
 
 echo "== identity: what auth_api.dart / user_api.dart call =="
 RA=$(reg "$A"); RB=$(reg "$B")
@@ -45,7 +45,7 @@ echo "== identity: usernames ignore case =="
 # "alice" and "Alice" were two accounts, and logging in with the wrong shift key was
 # answered "Incorrect username or password". V20 makes the uniqueness case-insensitive;
 # the spelling the user typed is still what is stored and displayed.
-check "the same name in another case is taken" 409 "$(code -X POST "$API/auth/register" -H "$JSON" -d "{\"username\":\"$(printf '%s' "$A" | tr 'a-z' 'A-Z')\",\"password\":\"password123\"}")"
+check "the same name in another case is taken" 409 "$(code -X POST "$API/auth/register" -H "$JSON" -d "{\"username\":\"$(printf '%s' "$A" | tr 'a-z' 'A-Z')\",\"password\":\"password123\",\"termsVersion\":\"2026-10-13\"}")"
 UPPER_LOGIN=$(curl -s -X POST "$API/auth/login" -H "$JSON" -d "{\"username\":\"$(printf '%s' "$A" | tr 'a-z' 'A-Z')\",\"password\":\"password123\"}")
 has "login works whatever case is typed" "$UPPER_LOGIN" '"token"'
 has "and the stored spelling is unchanged" "$UPPER_LOGIN" "\"username\":\"$A\""
@@ -60,7 +60,7 @@ has "PUT /users/me/email stores it lowercase" "$(curl -s -X PUT "$API/users/me/e
 check "another account cannot claim it" 409 "$(code -X PUT "$API/users/me/email" -H "$JSON" -H "$AUTHB" -d "{\"email\":\"$EMAIL_A\"}")"
 check "a malformed email is a 400" 400 "$(code -X PUT "$API/users/me/email" -H "$JSON" -H "$AUTHA" -d '{"email":"not-an-email"}')"
 check "the email endpoint needs a token" 401 "$(code "$API/users/me/email")"
-check "register with an email already taken is a 409" 409 "$(code -X POST "$API/auth/register" -H "$JSON" -d "{\"username\":\"cc_c_$STAMP\",\"password\":\"password123\",\"email\":\"$EMAIL_A\"}")"
+check "register with an email already taken is a 409" 409 "$(code -X POST "$API/auth/register" -H "$JSON" -d "{\"username\":\"cc_c_$STAMP\",\"password\":\"password123\",\"email\":\"$EMAIL_A\",\"termsVersion\":\"2026-10-13\"}")"
 check "POST /auth/forgot-password for a real address" 204 "$(code -X POST "$API/auth/forgot-password" -H "$JSON" -d "{\"email\":\"$EMAIL_A\"}")"
 check "and for one nobody has - the same answer" 204 "$(code -X POST "$API/auth/forgot-password" -H "$JSON" -d '{"email":"nobody-here@example.com"}')"
 check "forgot-password with a blank email is a 400" 400 "$(code -X POST "$API/auth/forgot-password" -H "$JSON" -d '{"email":""}')"
@@ -528,6 +528,81 @@ check "its password no longer signs in" 401 "$(code -X POST "$API/auth/login" -H
 check "its refresh token no longer mints a session" 401 "$(code -X POST "$API/auth/refresh" -H "$JSON" -d "{\"refreshToken\":\"$RTD\"}")"
 check "its plan went with it" 404 "$(code -H "$AUTHA" "$API/activities/$DPLAN")"
 case "$(curl -s -H "$AUTHA" "$API/friends/requests")" in *"$IDD"*) bad "A still sees the deleted account's request" ;; *) ok "A no longer sees the deleted account's request" ;; esac
+
+echo "== identity: terms of service and privacy policy =="
+# LegalDocuments.version in the client must equal LegalDocuments.CURRENT_VERSION here, or
+# every sign-up is refused with TERMS_REQUIRED.
+check "GET /legal/terms is public" 200 "$(code "$BASE/legal/terms")"
+check "GET /legal/privacy is public" 200 "$(code "$BASE/legal/privacy")"
+check "register without a terms version is refused" 400 "$(code -X POST "$API/auth/register" -H "$JSON" -d "{\"username\":\"cc_t_$STAMP\",\"password\":\"password123\"}")"
+TERMS_STALE=$(curl -s -X POST "$API/auth/register" -H "$JSON" -d "{\"username\":\"cc_t_$STAMP\",\"password\":\"password123\",\"termsVersion\":\"1999-01-01\"}")
+has "register with a stale terms version is TERMS_REQUIRED" "$TERMS_STALE" '"code":"TERMS_REQUIRED"'
+check "and it is a 428, with no account made" 428 "$(code -X POST "$API/auth/register" -H "$JSON" -d "{\"username\":\"cc_t_$STAMP\",\"password\":\"password123\",\"termsVersion\":\"1999-01-01\"}")"
+TERMS=$(curl -s -H "$AUTHA" "$API/users/me/terms")
+has "GET /users/me/terms says which version is current" "$TERMS" '"currentVersion":"2026-10-13"'
+has "and the version a new account agreed to" "$TERMS" '"acceptedVersion":"2026-10-13"'
+check "PUT /users/me/terms with another version is a 428" 428 "$(code -X PUT "$API/users/me/terms" -H "$JSON" -H "$AUTHA" -d '{"version":"1999-01-01"}')"
+check "PUT /users/me/terms with the current one is accepted" 200 "$(code -X PUT "$API/users/me/terms" -H "$JSON" -H "$AUTHA" -d '{"version":"2026-10-13"}')"
+check "the terms endpoint needs a token" 401 "$(code "$API/users/me/terms")"
+
+echo "== plan details: note, meeting point, limit, maybe (create_activity_requests.dart, activity_api.dart) =="
+# PUBLIC so a third account can try to join it: the limit is about who is *not* in the plan.
+C="cc_c_$STAMP"
+RC=$(reg "$C"); TC=$(jsonf "$RC" token); AUTHC="Authorization: Bearer $TC"
+CAP=$(curl -s -X POST "$API/activities" -H "$JSON" -H "$AUTHA" -d '{
+  "title":"Capped plan","startTime":"2031-06-01T14:00:00.000Z","hasTime":true,
+  "lat":41.7151,"lng":44.8271,"addressText":"Rustaveli","visibility":"PUBLIC","inviteeUserIds":[],
+  "category":"SPORTS","description":"Bring a ball","meetingPoint":"By the gate","maxParticipants":2}')
+CAPID=$(jsonf "$CAP" id)
+if [ -n "$CAPID" ]; then ok "POST /activities accepts description, meetingPoint and maxParticipants"; else bad "capped create ($CAP)"; fi
+CAPDETAIL=$(curl -s -H "$AUTHA" "$API/activities/$CAPID")
+has "GET /activities/{id} carries the note" "$CAPDETAIL" '"description":"Bring a ball"'
+has "and the meeting point" "$CAPDETAIL" '"meetingPoint":"By the gate"'
+has "and the limit" "$CAPDETAIL" '"maxParticipants":2'
+check "a limit of 1 is a 400 (a plan only its host can be in)" 400 "$(code -X POST "$API/activities" -H "$JSON" -H "$AUTHA" -d '{
+  "title":"Lonely","startTime":"2031-06-01T14:00:00.000Z","visibility":"FRIENDS","maxParticipants":1}')"
+check "a note over 500 characters is a 400" 400 "$(code -X POST "$API/activities" -H "$JSON" -H "$AUTHA" -d "{
+  \"title\":\"Wordy\",\"startTime\":\"2031-06-01T14:00:00.000Z\",\"visibility\":\"FRIENDS\",\"description\":\"$(head -c 501 /dev/zero | tr '\0' x)\"}")"
+
+has "the host is the first of the two places" "$CAPDETAIL" '"participantCount":1'
+has "B takes the second place" "$(curl -s -X POST -H "$AUTHB" "$API/activities/$CAPID/join")" 'JOINED'
+check "joining again is still fine (idempotent)" 200 "$(code -X POST -H "$AUTHB" "$API/activities/$CAPID/join")"
+check "C is refused: the plan is full" 409 "$(code -X POST -H "$AUTHC" "$API/activities/$CAPID/join")"
+check "and so is answering yes to it" 409 "$(code -X POST -H "$AUTHC" "$API/activities/$CAPID/respond?going=true")"
+has "POST /activities/{id}/maybe answers MAYBE" "$(curl -s -X POST -H "$AUTHC" "$API/activities/$CAPID/maybe")" 'MAYBE'
+has "a maybe takes no place" "$(curl -s -H "$AUTHA" "$API/activities/$CAPID")" '"participantCount":2'
+has "and is listed with the people in the plan" "$(curl -s -H "$AUTHA" "$API/activities/$CAPID/participants")" '"status":"MAYBE"'
+check "the host cannot be a maybe" 400 "$(code -X POST -H "$AUTHA" "$API/activities/$CAPID/maybe")"
+check "C can still say no to a full plan" 200 "$(code -X POST -H "$AUTHC" "$API/activities/$CAPID/respond?going=false")"
+check "B leaves, and a place opens" 204 "$(code -X DELETE -H "$AUTHB" "$API/activities/$CAPID/join")"
+has "so C can take it" "$(curl -s -X POST -H "$AUTHC" "$API/activities/$CAPID/join")" 'JOINED'
+
+# ActivityApi.getMapMarkers - category (repeated key), from and to, all optional.
+MAPWIN="minLat=41.6&minLng=44.7&maxLat=41.8&maxLng=44.9&zoom=14"
+has "GET /activities/map?category= keeps a matching plan" "$(curl -s -H "$AUTHA" "$API/activities/map?$MAPWIN&category=SPORTS&category=YOGA")" '"title":"Capped plan"'
+case "$(curl -s -H "$AUTHA" "$API/activities/map?$MAPWIN&category=YOGA&category=GYM")" in
+  *'"title":"Capped plan"'*) bad "GET /activities/map?category= drops other categories" ;;
+  *) ok "GET /activities/map?category= drops other categories" ;;
+esac
+has "GET /activities/map?from=&to= keeps a plan inside the window" "$(curl -s -H "$AUTHA" "$API/activities/map?$MAPWIN&from=2031-06-01T00:00:00.000Z&to=2031-06-02T00:00:00.000Z")" '"title":"Capped plan"'
+case "$(curl -s -H "$AUTHA" "$API/activities/map?$MAPWIN&from=2031-07-01T00:00:00.000Z&to=2031-07-02T00:00:00.000Z")" in
+  *'"title":"Capped plan"'*) bad "GET /activities/map?from=&to= drops a plan outside it" ;;
+  *) ok "GET /activities/map?from=&to= drops a plan outside it" ;;
+esac
+check "a window that ends before it starts is a 400" 400 "$(code -H "$AUTHA" "$API/activities/map?$MAPWIN&from=2031-07-02T00:00:00.000Z&to=2031-07-01T00:00:00.000Z")"
+check "an unknown category is a 400" 400 "$(code -H "$AUTHA" "$API/activities/map?$MAPWIN&category=NOPE")"
+
+# PeopleApi.getCatchUp - empty is normal; what the client needs is the array.
+CATCHUP=$(curl -s -H "$AUTHA" "$API/me/catch-up?limit=5")
+check "GET /me/catch-up" 200 "$(code -H "$AUTHA" "$API/me/catch-up?limit=5")"
+has "and it is a JSON array" "$CATCHUP" '['
+check "catch-up needs a token" 401 "$(code "$API/me/catch-up")"
+
+# The landing page behind a shared plan's link: public, and the same for any id.
+LANDING=$(curl -s "$BASE/p/$CAPID")
+has "GET /p/{id} is public and opens the app" "$LANDING" "linkup://app/p/$CAPID"
+check "and is the same page for a plan that does not exist" 200 "$(code "$BASE/p/00000000-0000-4000-8000-000000000000")"
+check "cleaning up the capped plan" 204 "$(code -X DELETE -H "$AUTHA" "$API/activities/$CAPID")"
 
 echo
 echo "==== $pass passed, $fail failed ===="

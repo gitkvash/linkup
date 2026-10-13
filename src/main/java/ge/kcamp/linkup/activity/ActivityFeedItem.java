@@ -35,6 +35,10 @@ import java.util.UUID;
  *                         anything. Null falls back to {@code creatorUsername} - the
  *                         client renders one line, and which name fills it is a
  *                         question with one answer, not one per screen.
+ * @param description      the host's note for the people coming, or null.
+ * @param meetingPoint     where to find the host once at the place, or null.
+ * @param maxParticipants  the cap on {@code participantCount}, or null for no limit. A plan
+ *                         at its cap refuses anyone not already in it (409 on join).
  * @param creatorUsername  who made the plan. Carried for the same reason
  *                         {@code FeedItemDto} carries it: the client had only
  *                         {@code creatorId}, so the detail screen's "Organiser" row
@@ -63,6 +67,9 @@ public record ActivityFeedItem(
         RepeatFrequency repeatFrequency,
         Integer repeatInterval,
         ZonedDateTime repeatUntil,
-        ActivityStatus status
+        ActivityStatus status,
+        String description,
+        String meetingPoint,
+        Integer maxParticipants
 ) {
 }

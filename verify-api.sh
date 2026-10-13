@@ -17,7 +17,7 @@ STAMP="$$_$(date +%s)"
 A="alice_$STAMP"; B="bob_$STAMP"
 
 reg() { curl -s -X POST "$API/auth/register" -H 'Content-Type: application/json' \
-          -d "{\"username\":\"$1\",\"password\":\"password123\"}"; }
+          -d "{\"username\":\"$1\",\"password\":\"password123\",\"termsVersion\":\"2026-10-13\"}"; }
 
 echo "== setup =="
 RA=$(reg "$A"); RB=$(reg "$B")
@@ -76,7 +76,7 @@ case "$WRONG" in *INVALID_CREDENTIALS*) ok "wrong password is flagged INVALID_CR
 
 echo "== duplicate username is a 409, not a 500 =="
 DUP=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/auth/register" -H "$JSON" \
-  -d "{\"username\":\"$A\",\"password\":\"password123\"}")
+  -d "{\"username\":\"$A\",\"password\":\"password123\",\"termsVersion\":\"2026-10-13\"}")
 check "duplicate username status" 409 "$DUP"
 
 echo "== unauthenticated is 401, not 403 =="

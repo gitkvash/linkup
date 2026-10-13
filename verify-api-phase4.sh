@@ -13,7 +13,7 @@ JSON='Content-Type: application/json'
 
 STAMP="$$_$(date +%s)"
 A="p4a_$STAMP"; B="p4b_$STAMP"
-reg() { curl -s -X POST "$API/auth/register" -H "$JSON" -d "{\"username\":\"$1\",\"password\":\"password123\"}"; }
+reg() { curl -s -X POST "$API/auth/register" -H "$JSON" -d "{\"username\":\"$1\",\"password\":\"password123\",\"termsVersion\":\"2026-10-13\"}"; }
 
 echo "== setup: two friends =="
 RA=$(reg "$A"); RB=$(reg "$B")

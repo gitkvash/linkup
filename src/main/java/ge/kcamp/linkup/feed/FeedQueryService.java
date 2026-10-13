@@ -229,6 +229,7 @@ public class FeedQueryService {
                 item.repeatInterval(),
                 item.participantCount(),
                 preview,
-                item.endTime());
+                item.endTime(),
+                item.maxParticipants());
     }
 }

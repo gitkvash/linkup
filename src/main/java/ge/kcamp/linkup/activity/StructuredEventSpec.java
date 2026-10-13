@@ -12,6 +12,9 @@ import java.time.ZonedDateTime;
  *                        per occurrence (see {@code V24__activity_recurrence.sql}).
  * @param repeatInterval  "every N" - only meaningful alongside a frequency.
  * @param repeatUntil     when the repetition stops, or null for no end date.
+ * @param description     a note for the people coming, or null.
+ * @param meetingPoint    where to find the host once at the place, or null.
+ * @param maxParticipants the cap on JOINED people, host included, or null for none.
  */
 public record StructuredEventSpec(
         String title,
@@ -23,6 +26,9 @@ public record StructuredEventSpec(
         Double lng,
         RepeatFrequency repeatFrequency,
         Integer repeatInterval,
-        ZonedDateTime repeatUntil
+        ZonedDateTime repeatUntil,
+        String description,
+        String meetingPoint,
+        Integer maxParticipants
 ) implements ActivitySpec {
 }

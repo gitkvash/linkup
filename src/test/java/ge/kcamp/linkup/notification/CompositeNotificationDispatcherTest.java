@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -79,5 +80,28 @@ class CompositeNotificationDispatcherTest {
         dispatcher.dispatch(message, occurredAt);
 
         verify(sse).dispatch(message);
+    }
+
+    /** One event's many recipients: rows first, then one batch to each channel, of the new ones only. */
+    @Test
+    void aBatchPushesOnlyTheRowsThatWereNew() {
+        NotificationMessage duplicate = new NotificationMessage(
+                UUID.randomUUID(), "GROUP_ACTIVITY", "t", "b", Map.of("activityId", UUID.randomUUID().toString()));
+        when(store.recordAll(List.of(message, duplicate), occurredAt)).thenReturn(List.of(message));
+
+        dispatcher.dispatchAll(List.of(message, duplicate), occurredAt);
+
+        verify(fcm).dispatchAll(List.of(message));
+        verify(sse).dispatchAll(List.of(message));
+    }
+
+    @Test
+    void aBatchOfDuplicatesPushesNothing() {
+        when(store.recordAll(List.of(message), occurredAt)).thenReturn(List.of());
+
+        dispatcher.dispatchAll(List.of(message), occurredAt);
+
+        verify(fcm, never()).dispatchAll(any());
+        verify(sse, never()).dispatchAll(any());
     }
 }

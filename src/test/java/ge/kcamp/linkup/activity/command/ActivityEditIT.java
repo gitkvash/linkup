@@ -65,7 +65,7 @@ class ActivityEditIT extends AbstractIntegrationTest {
         commandHandler.handle(new UpdateActivityCommand(
                 created.getId(), creatorId, "Basketball", ZonedDateTime.now().plusDays(2),
                 null, true, 41.6938, 44.8015, "Vake Park", ActivityVisibility.PUBLIC, null, null,
-                null, null, null));
+                null, null, null, null, null, null));
 
         ActivityFeedItem updated = readModel(created.getId(), creatorId).orElseThrow();
         assertThat(updated.title()).isEqualTo("Basketball");
@@ -84,7 +84,7 @@ class ActivityEditIT extends AbstractIntegrationTest {
         commandHandler.handle(new UpdateActivityCommand(
                 created.getId(), creatorId, "Renamed", ZonedDateTime.now().plusDays(1),
                 null, true, 41.7151, 44.8271, "Rustaveli", ActivityVisibility.FRIENDS, null, null,
-                null, null, null));
+                null, null, null, null, null, null));
 
         assertThat(participantRepository.findByIdActivityIdOrderByStatusAsc(created.getId()))
                 .hasSize(1);
@@ -106,7 +106,7 @@ class ActivityEditIT extends AbstractIntegrationTest {
         assertThatThrownBy(() -> commandHandler.handle(new UpdateActivityCommand(
                 created.getId(), strangerId, "Hijacked", ZonedDateTime.now().plusDays(1),
                 null, true, 41.7, 44.8, "Somewhere", ActivityVisibility.PUBLIC, null, null,
-                null, null, null)))
+                null, null, null, null, null, null)))
                 .isInstanceOf(ActivityNotVisibleException.class);
 
         assertThatThrownBy(() ->
@@ -144,7 +144,7 @@ class ActivityEditIT extends AbstractIntegrationTest {
         commandHandler.handle(new UpdateActivityCommand(
                 created.getId(), creatorId, "Somewhere, later", ZonedDateTime.now().plusDays(3),
                 null, false, null, null, null, ActivityVisibility.FRIENDS, null, null,
-                null, null, null));
+                null, null, null, null, null, null));
 
         assertThat(locationRepository.findByActivityId(created.getId())).isEmpty();
         ActivityFeedItem updated = readModel(created.getId(), creatorId).orElseThrow();
@@ -157,6 +157,6 @@ class ActivityEditIT extends AbstractIntegrationTest {
         return commandHandler.handle(new CreateStructuredActivityCommand(
                 creatorId, "Football", ZonedDateTime.now().plusDays(1), null, true,
                 41.7151, 44.8271, "Rustaveli", ActivityVisibility.FRIENDS, null, List.of(), null,
-                null, null, null));
+                null, null, null, null, null, null));
     }
 }

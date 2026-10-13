@@ -65,6 +65,35 @@ the "plan updated" notice, minus the proposer), sets the proposer `JOINED`, and 
 open suggestions. Repeating plans are refused: moving the anchor moves the whole series. Rows are
 never deleted by the app (no `DELETE` grant); only `status` changes.
 
+## Plan details, limits and "maybe"
+
+`V41` adds `description`, `meeting_point` and `max_participants` (2+, host included, null = no limit) to
+`activities`; they travel through `StructuredEventSpec`, the create/update commands and
+`ActivityFeedItem`. An edit replaces all three. A limit below the people already JOINED is a 400, and
+a changed meeting point counts as a place change for the "plan updated" notice.
+
+`ActivityParticipationService.requireRoom` enforces the limit on `join` and on accepting an
+invitation: it takes a per-plan **advisory lock** (`ParticipantRepository.lockPlan`) before counting
+JOINED, so two people taking the last place can't both succeed, and throws `ActivityFullException`
+(409). It is not `SELECT ... FOR UPDATE` on the activity: that needs the UPDATE policy, which only the
+host passes. Someone already JOINED is never refused. Accepting a time suggestion deliberately skips
+the check: it is the host's own call.
+
+`ParticipantStatus.MAYBE` (`POST /{id}/maybe`) takes no place: not in `participant_count`, not against
+the limit, and in `ParticipantRepository.IN_THE_PLAN`, so it still hears about edits, the start and a
+cancellation. The host can't be a maybe.
+
+## Share links, filters and catch-up
+
+- `ShareLandingController` serves `GET /p/{id}` (public). It looks nothing up and says nothing about
+  the plan, so it can't leak a private one; it hands the tap on to `linkup://app/p/<id>`.
+- `GET /activities/map` takes optional `category` (repeatable), `from` and `to`, applied inside the
+  clustering CTE (`ActivityMapRepository.Filter`). A repeating plan passes while its series overlaps
+  the window.
+- `GET /me/catch-up` (`people.CatchUpService`) is computed fresh from `ActivityHistoryService`: friends
+  with a plan in common in the last 365 days, none in the last 28, none muted, none in an unfinished
+  plan with the caller. Closest friends first. Nothing is stored.
+
 ## Events
 
 Cross-module reactions (activity created → notification, friendship accepted → feed) use Spring

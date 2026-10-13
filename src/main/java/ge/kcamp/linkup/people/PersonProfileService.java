@@ -17,7 +17,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.Comparator;
-import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -75,7 +74,7 @@ public class PersonProfileService {
         UserSummary user = found.get();
 
         PeopleQueryRepository.Counts counts = peopleQueryRepository.countsFor(userId);
-        long together = activityHistoryService.happenedTogether(viewerId, userId).size();
+        long together = activityHistoryService.countHappenedTogether(viewerId, userId);
 
         List<UserSummary> mutual = relationship.kind() == Relationship.Kind.SELF
                 ? List.of()
@@ -111,12 +110,13 @@ public class PersonProfileService {
         });
     }
 
+    /**
+     * Counted from each plan's category and lifecycle alone: reading every plan's full
+     * feed row - up to a thousand - to keep one field of it was most of a profile's cost.
+     */
     private List<CategoryCountDto> favouriteCategories(UUID userId, UUID viewerId) {
-        Map<ActivityCategory, Long> counts = new EnumMap<>(ActivityCategory.class);
-        for (ActivityFeedItem item : activityHistoryService.happenedBetween(
-                userId, viewerId, Instant.EPOCH, Instant.now())) {
-            counts.merge(item.category(), 1L, Long::sum);
-        }
+        Map<ActivityCategory, Long> counts =
+                activityHistoryService.happenedByCategory(userId, viewerId, Instant.EPOCH, Instant.now());
         return counts.entrySet().stream()
                 .sorted(Map.Entry.<ActivityCategory, Long>comparingByValue().reversed()
                         .thenComparing(Map.Entry.comparingByKey()))

@@ -11,7 +11,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -56,6 +58,7 @@ public class PasswordResetService {
     private final RefreshTokenRepository refreshTokens;
     private final PasswordEncoder passwordEncoder;
     private final PasswordResetMailer mailer;
+    private final TransactionTemplate transactions;
     private final SecureRandom random = new SecureRandom();
 
     /** What a comparison runs against when there is no real code hash. See {@link IdentityService}. */
@@ -66,42 +69,49 @@ public class PasswordResetService {
             PasswordResetCodeRepository codes,
             RefreshTokenRepository refreshTokens,
             PasswordEncoder passwordEncoder,
-            PasswordResetMailer mailer) {
+            PasswordResetMailer mailer,
+            PlatformTransactionManager transactionManager) {
         this.userRepository = userRepository;
         this.codes = codes;
         this.refreshTokens = refreshTokens;
         this.passwordEncoder = passwordEncoder;
         this.mailer = mailer;
+        this.transactions = new TransactionTemplate(transactionManager);
         this.dummyCodeHash = passwordEncoder.encode(UUID.randomUUID().toString());
     }
 
     /**
      * Emails a fresh code if {@code email} belongs to an account with a password. Returns
      * normally in every case.
+     * <p>
+     * Not {@code @Transactional}: the BCrypt runs before the transaction opens, so its
+     * ~100 ms of CPU doesn't hold a pooled connection, and the transaction is only the
+     * reads and the one write that need it.
      */
-    @Transactional
     public void requestCode(String email) {
         // First, and on every path: the one BCrypt that real requests pay, so that "no such
         // account" is not the fast answer.
         String code = String.format("%06d", random.nextInt(1_000_000));
         String codeHash = passwordEncoder.encode(code);
 
-        String normalized = EmailAddress.normalize(email);
-        Optional<User> user = normalized == null ? Optional.empty() : userRepository.findByEmail(normalized);
-        if (user.isEmpty() || user.get().getPasswordHash() == null) {
-            // Unknown address, or a Google-only account: there is no password to reset.
-            return;
-        }
+        transactions.executeWithoutResult(status -> {
+            String normalized = EmailAddress.normalize(email);
+            Optional<User> user = normalized == null ? Optional.empty() : userRepository.findByEmail(normalized);
+            if (user.isEmpty() || user.get().getPasswordHash() == null) {
+                // Unknown address, or a Google-only account: there is no password to reset.
+                return;
+            }
 
-        UUID userId = user.get().getId();
-        Instant now = Instant.now();
-        Optional<PasswordResetCode> existing = codes.findById(userId);
-        if (existing.isPresent() && existing.get().getCreatedAt().isAfter(now.minus(RESEND_COOLDOWN))) {
-            return;
-        }
+            UUID userId = user.get().getId();
+            Instant now = Instant.now();
+            Optional<PasswordResetCode> existing = codes.findById(userId);
+            if (existing.isPresent() && existing.get().getCreatedAt().isAfter(now.minus(RESEND_COOLDOWN))) {
+                return;
+            }
 
-        codes.upsert(userId, codeHash, now, now.plus(CODE_TTL));
-        sendAfterCommit(normalized, code);
+            codes.upsert(userId, codeHash, now, now.plus(CODE_TTL));
+            sendAfterCommit(normalized, code);
+        });
     }
 
     /**
@@ -148,6 +158,11 @@ public class PasswordResetService {
     /**
      * Only once the row is committed: a mail that went out before a rollback would carry a
      * code that was never stored, and there is no telling that apart from a wrong one.
+     * <p>
+     * This does not send on the request thread: the SMTP mailer only queues the message on
+     * its own pool (see {@code PasswordResetMailConfig}), so the callback returns at once.
+     * Deliberately not a Modulith event either - its publication log would store the
+     * plain code in the database until the listener completed.
      */
     private void sendAfterCommit(String toEmail, String code) {
         int minutes = (int) CODE_TTL.toMinutes();

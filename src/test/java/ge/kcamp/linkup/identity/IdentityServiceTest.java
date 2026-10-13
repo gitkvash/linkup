@@ -6,6 +6,7 @@ import ge.kcamp.linkup.identity.entity.User;
 import ge.kcamp.linkup.identity.exception.AuthenticationFailedException;
 import ge.kcamp.linkup.identity.exception.RateLimitExceededException;
 import ge.kcamp.linkup.identity.exception.SessionExpiredException;
+import ge.kcamp.linkup.identity.exception.TermsNotAcceptedException;
 import ge.kcamp.linkup.identity.repository.RefreshTokenRepository;
 import ge.kcamp.linkup.identity.repository.UserRepository;
 import ge.kcamp.linkup.identity.security.GoogleTokenVerifier;
@@ -20,6 +21,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.mock.env.MockEnvironment;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -72,7 +74,8 @@ class IdentityServiceTest {
     }
 
     private IdentityService newService(LoginAttemptLimiter limiter) {
-        return new IdentityService(users, refreshTokens, encoder, jwtUtil, google, limiter);
+        return new IdentityService(users, refreshTokens, encoder, jwtUtil, google, limiter,
+                mock(PlatformTransactionManager.class));
     }
 
     // --- refresh -------------------------------------------------------------------
@@ -287,10 +290,99 @@ class IdentityServiceTest {
             return created;
         });
 
-        AuthResponse response = service.loginWithGoogle("id-token");
+        AuthResponse response = service.loginWithGoogle("id-token", LegalDocuments.CURRENT_VERSION);
 
         assertThat(response.newAccount()).isTrue();
         assertThat(response.username()).matches("user[a-z0-9]{8}").doesNotContainIgnoringCase("giorgi");
+    }
+
+    @Test
+    void googleSignInThatWouldCreateAnAccountNeedsTheCurrentTerms() {
+        when(google.verify("id-token")).thenReturn(new GoogleTokenVerifier.Result("google-sub", null));
+        when(users.findByGoogleId("google-sub")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.loginWithGoogle("id-token", null))
+                .isInstanceOf(TermsNotAcceptedException.class);
+        assertThatThrownBy(() -> service.loginWithGoogle("id-token", "1999-01-01"))
+                .isInstanceOf(TermsNotAcceptedException.class);
+        // Nothing was written: someone who has not agreed leaves no account behind.
+        verify(users, never()).saveAndFlush(any(User.class));
+    }
+
+    @Test
+    void googleSignInRecordsWhatTheNewAccountAgreedTo() {
+        when(google.verify("id-token")).thenReturn(new GoogleTokenVerifier.Result("google-sub", null));
+        when(users.findByGoogleId("google-sub")).thenReturn(Optional.empty());
+        when(users.existsByUsernameIgnoringCase(anyString())).thenReturn(false);
+        when(users.saveAndFlush(any(User.class))).thenAnswer(invocation -> {
+            User created = invocation.getArgument(0);
+            created.setId(UUID.randomUUID());
+            return created;
+        });
+
+        service.loginWithGoogle("id-token", LegalDocuments.CURRENT_VERSION);
+
+        ArgumentCaptor<User> saved = ArgumentCaptor.forClass(User.class);
+        verify(users).saveAndFlush(saved.capture());
+        assertThat(saved.getValue().getTermsVersion()).isEqualTo(LegalDocuments.CURRENT_VERSION);
+        assertThat(saved.getValue().getTermsAcceptedAt()).isNotNull();
+    }
+
+    @Test
+    void anExistingGoogleAccountSignsInWithoutBeingAskedAgain() {
+        User existing = new User();
+        existing.setId(UUID.randomUUID());
+        existing.setUsername("old-timer");
+        when(google.verify("id-token")).thenReturn(new GoogleTokenVerifier.Result("google-sub", null));
+        when(users.findByGoogleId("google-sub")).thenReturn(Optional.of(existing));
+
+        AuthResponse response = service.loginWithGoogle("id-token", null);
+
+        assertThat(response.newAccount()).isFalse();
+        verify(users, never()).saveAndFlush(any(User.class));
+    }
+
+    // --- Terms and Privacy Policy ----------------------------------------------------
+
+    @Test
+    void registrationWithoutTheCurrentTermsCreatesNothing() {
+        assertThatThrownBy(() -> service.register("alice", "password123", null, null))
+                .isInstanceOf(TermsNotAcceptedException.class);
+        assertThatThrownBy(() -> service.register("alice", "password123", null, "1999-01-01"))
+                .isInstanceOf(TermsNotAcceptedException.class);
+        verify(users, never()).saveAndFlush(any(User.class));
+    }
+
+    @Test
+    void registrationRecordsWhatWasAgreedToAndWhen() {
+        when(users.existsByUsernameIgnoringCase("alice")).thenReturn(false);
+        when(users.saveAndFlush(any(User.class))).thenAnswer(invocation -> {
+            User created = invocation.getArgument(0);
+            created.setId(UUID.randomUUID());
+            return created;
+        });
+
+        service.register("alice", "password123", null, LegalDocuments.CURRENT_VERSION);
+
+        ArgumentCaptor<User> saved = ArgumentCaptor.forClass(User.class);
+        verify(users).saveAndFlush(saved.capture());
+        assertThat(saved.getValue().getTermsVersion()).isEqualTo(LegalDocuments.CURRENT_VERSION);
+        assertThat(saved.getValue().getTermsAcceptedAt()).isNotNull();
+    }
+
+    @Test
+    void anExistingAccountCanAgreeToTheCurrentVersionOnly() {
+        TermsService terms = new TermsService(users);
+
+        assertThat(terms.status(user.getId()).orElseThrow().acceptedVersion()).isNull();
+        assertThatThrownBy(() -> terms.accept(user.getId(), "1999-01-01"))
+                .isInstanceOf(TermsNotAcceptedException.class);
+        assertThat(user.getTermsVersion()).isNull();
+
+        var status = terms.accept(user.getId(), LegalDocuments.CURRENT_VERSION).orElseThrow();
+
+        assertThat(status.acceptedVersion()).isEqualTo(LegalDocuments.CURRENT_VERSION);
+        assertThat(user.getTermsAcceptedAt()).isNotNull();
     }
 
     // -------------------------------------------------------------------------------

@@ -14,6 +14,8 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
@@ -74,7 +76,7 @@ public class ActivityMapRepository {
     // before looking at the box. The function reads the caller from the connection, so
     // it answers only for the user this request is stamped with - the same one bound to
     // :viewerId.
-    private static final String CLUSTER_QUERY = """
+    private static final String CLUSTER_QUERY_TEMPLATE = """
             WITH visible AS (
                 SELECT a.activity_id, a.title, a.activity_type, a.category,
                        a.start_time, a.has_time, l.address_text,
@@ -87,6 +89,7 @@ public class ActivityMapRepository {
                       SELECT app_visible_activities_in_bbox(:minLng, :minLat, :maxLng, :maxLat))
                   AND %s
                   AND %s
+                  %s
                 ORDER BY a.start_time, a.activity_id
                 LIMIT %d
             ), clustered AS (
@@ -103,8 +106,53 @@ public class ActivityMapRepository {
                    ST_X(geom_point) AS lng
             FROM clustered
             ORDER BY start_time, activity_id
-            """.formatted(ActivityStatusSql.IS_LIVE, ActivityStatusSql.NOT_OVER,
-                    ActivityVisibilitySql.VISIBLE_TO_VIEWER, MAX_CLUSTERED_ROWS);
+            """;
+
+    /**
+     * What the map may be narrowed to, all optional.
+     *
+     * @param categories only these categories; null or empty for every one
+     * @param from       only plans still on at or after this instant (null: no lower bound)
+     * @param to         only plans that start before this instant (null: no upper bound)
+     */
+    public record Filter(List<ActivityCategory> categories, Instant from, Instant to) {
+
+        public static final Filter NONE = new Filter(null, null, null);
+
+        boolean hasCategories() {
+            return categories != null && !categories.isEmpty();
+        }
+
+        /**
+         * The extra {@code AND} clauses, for the {@code visible} CTE. They sit in it, not
+         * after clustering, for the reason the visibility predicate does: a plan that is
+         * filtered out must not pull a cluster's centre or count.
+         * <p>
+         * A one-off plan is in the window when it starts inside it, or is already under way at
+         * {@code from}. A repeating plan has no single start to compare - the repetitions are
+         * not rows (V24) - so it passes while its series overlaps the window, which can show
+         * a weekly plan on a day it does not actually fall on; the detail screen has the rule.
+         */
+        String sql() {
+            StringBuilder out = new StringBuilder();
+            if (hasCategories()) {
+                out.append(" AND a.category IN (:categories)");
+            }
+            if (from != null) {
+                out.append(" AND (a.start_time >= :from OR a.repeat_freq IS NOT NULL OR a.started_at IS NOT NULL)");
+                out.append(" AND (a.repeat_freq IS NULL OR a.repeat_until IS NULL OR a.repeat_until >= :from)");
+            }
+            if (to != null) {
+                out.append(" AND a.start_time < :to");
+            }
+            return out.toString();
+        }
+    }
+
+    private static String clusterQuery(Filter filter) {
+        return CLUSTER_QUERY_TEMPLATE.formatted(ActivityStatusSql.IS_LIVE, ActivityStatusSql.NOT_OVER,
+                ActivityVisibilitySql.VISIBLE_TO_VIEWER, filter.sql(), MAX_CLUSTERED_ROWS);
+    }
 
     private final NamedParameterJdbcTemplate jdbcTemplate;
 
@@ -114,6 +162,11 @@ public class ActivityMapRepository {
 
     public List<MapMarkerDto> findClusteredMarkers(
             BoundingBox bbox, double epsMeters, int minPoints, UUID viewerId) {
+        return findClusteredMarkers(bbox, epsMeters, minPoints, viewerId, Filter.NONE);
+    }
+
+    public List<MapMarkerDto> findClusteredMarkers(
+            BoundingBox bbox, double epsMeters, int minPoints, UUID viewerId, Filter filter) {
 
         Map<String, Object> params = new HashMap<>();
         params.put("minLat", bbox.minLat());
@@ -124,11 +177,20 @@ public class ActivityMapRepository {
         params.put("minPoints", minPoints);
         params.put(ActivityVisibilitySql.VIEWER_ID_PARAM,
                 Objects.requireNonNull(viewerId, "viewerId is required to read the map"));
+        if (filter.hasCategories()) {
+            params.put("categories", filter.categories().stream().map(Enum::name).toList());
+        }
+        if (filter.from() != null) {
+            params.put("from", Timestamp.from(filter.from()));
+        }
+        if (filter.to() != null) {
+            params.put("to", Timestamp.from(filter.to()));
+        }
 
         // Insertion-ordered, and the rows arrive soonest first, so each group's members
         // are already in the order the list shows them.
         Map<String, List<ClusteredRow>> groups = new LinkedHashMap<>();
-        jdbcTemplate.query(CLUSTER_QUERY, params, (ResultSet rs) -> {
+        jdbcTemplate.query(clusterQuery(filter), params, (ResultSet rs) -> {
             groups.computeIfAbsent(rs.getString("group_key"), key -> new ArrayList<>())
                     .add(ClusteredRow.from(rs));
         });
@@ -223,7 +285,7 @@ public class ActivityMapRepository {
      * ordering the user reads as "near me".
      * <p>
      * The text match goes through {@code app_visible_activities_matching} (V36) for the
-     * reason {@link #CLUSTER_QUERY} gives for the viewport: ILIKE is not leakproof either,
+     * reason {@link #CLUSTER_QUERY_TEMPLATE} gives for the viewport: ILIKE is not leakproof either,
      * so under RLS every row paid the policy before the pattern was tried.
      */
     private static final String SEARCH_QUERY = """
