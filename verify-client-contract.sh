@@ -604,6 +604,15 @@ has "GET /p/{id} is public and opens the app" "$LANDING" "linkup://app/p/$CAPID"
 check "and is the same page for a plan that does not exist" 200 "$(code "$BASE/p/00000000-0000-4000-8000-000000000000")"
 check "cleaning up the capped plan" 204 "$(code -X DELETE -H "$AUTHA" "$API/activities/$CAPID")"
 
+echo "== moderation: what report_api.dart calls =="
+check "POST /reports a user" 204 "$(code -X POST "$API/reports" -H "$JSON" -H "$AUTHA" -d "{\"targetType\":\"USER\",\"targetId\":\"$IDB\",\"reason\":\"HARASSMENT\",\"details\":\"contract check\"}")"
+check "the same report again is quietly accepted" 204 "$(code -X POST "$API/reports" -H "$JSON" -H "$AUTHA" -d "{\"targetType\":\"USER\",\"targetId\":\"$IDB\",\"reason\":\"SPAM\"}")"
+check "POST /reports a plan, with no details" 204 "$(code -X POST "$API/reports" -H "$JSON" -H "$AUTHA" -d "{\"targetType\":\"ACTIVITY\",\"targetId\":\"$IDB\",\"reason\":\"UNSAFE\"}")"
+check "an unknown reason is a 400" 400 "$(code -X POST "$API/reports" -H "$JSON" -H "$AUTHA" -d "{\"targetType\":\"USER\",\"targetId\":\"$IDB\",\"reason\":\"BORING\"}")"
+check "a missing target is a 400" 400 "$(code -X POST "$API/reports" -H "$JSON" -H "$AUTHA" -d '{"targetType":"USER","reason":"SPAM"}')"
+check "details over 500 characters are a 400" 400 "$(code -X POST "$API/reports" -H "$JSON" -H "$AUTHA" -d "{\"targetType\":\"USER\",\"targetId\":\"$IDB\",\"reason\":\"SPAM\",\"details\":\"$(printf 'x%.0s' $(seq 1 501))\"}")"
+check "reports need a token" 401 "$(code -X POST "$API/reports" -H "$JSON" -d "{\"targetType\":\"USER\",\"targetId\":\"$IDB\",\"reason\":\"SPAM\"}")"
+
 echo
 echo "==== $pass passed, $fail failed ===="
 [ "$fail" -eq 0 ]
