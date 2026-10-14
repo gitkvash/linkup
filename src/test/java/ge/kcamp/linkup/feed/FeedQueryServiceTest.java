@@ -6,6 +6,7 @@ import ge.kcamp.linkup.activity.enums.ActivityCategory;
 import ge.kcamp.linkup.activity.enums.ActivityStatus;
 import ge.kcamp.linkup.activity.enums.ActivityType;
 import ge.kcamp.linkup.activity.enums.ActivityVisibility;
+import ge.kcamp.linkup.activity.enums.ParticipantStatus;
 import ge.kcamp.linkup.feed.dto.FeedItemDto;
 import ge.kcamp.linkup.feed.dto.FeedPageDto;
 import ge.kcamp.linkup.identity.UserDirectoryService;
@@ -145,6 +146,20 @@ class FeedQueryServiceTest {
         assertThat(preview.get(0).has("username")).isTrue();
         assertThat(preview.get(0).get("id").asString()).isEqualTo(a.toString());
         assertThat(preview.get(0).get("username").asString()).isEqualTo("alice");
+    }
+
+    @Test
+    void theViewersOwnStatusIsCarriedSoTheAllTabCanTagPlansTheyAreIn() {
+        ActivityFeedItem base = item(UUID.randomUUID(), 2, ZonedDateTime.now());
+        ActivityFeedItem joined = new ActivityFeedItem(base.activityId(), creator, "cara", "Cara", "Dinner",
+                ActivityType.SPECIFIC_EVENT, ActivityVisibility.PUBLIC, base.startTime(), null, true, "Somewhere",
+                null, null, 2, ParticipantStatus.JOINED, null, null, ActivityCategory.FOOD_AND_DRINK, null, null,
+                null, ActivityStatus.UPCOMING, null, null, null);
+        Map<UUID, UserSummary> people = Map.of(creator, person(creator, "cara", "Cara"));
+
+        assertThat(FeedQueryService.toDto(joined, people, List.of()).viewerStatus())
+                .isEqualTo(ParticipantStatus.JOINED);
+        assertThat(FeedQueryService.toDto(base, people, List.of()).viewerStatus()).isNull();
     }
 
     private static UserSummary person(UUID id, String username, String displayName) {

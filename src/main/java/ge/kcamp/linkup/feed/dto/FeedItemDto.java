@@ -3,6 +3,7 @@ package ge.kcamp.linkup.feed.dto;
 import ge.kcamp.linkup.activity.enums.ActivityCategory;
 import ge.kcamp.linkup.activity.enums.ActivityStatus;
 import ge.kcamp.linkup.activity.enums.ActivityType;
+import ge.kcamp.linkup.activity.enums.ParticipantStatus;
 import ge.kcamp.linkup.activity.enums.RepeatFrequency;
 
 import java.time.ZonedDateTime;
@@ -37,6 +38,12 @@ import java.util.UUID;
  *                        window and a progress bar from it; null means no end was given.
  *                        For a repeating plan this is the first occurrence's end, like
  *                        {@code startTime}.
+ * @param viewerStatus    the viewer's own place in the plan - INVITED, JOINED, MAYBE or
+ *                        DECLINED - or null when they have none. The same field
+ *                        {@code ActivityFeedItem} carries. Without it the "All" tab, which
+ *                        mixes plans the viewer is in with plans they are not, had no way to
+ *                        tell them apart. A plan the viewer created has no participant row
+ *                        of its own here; the client reads that from {@code creatorId}.
  */
 public record FeedItemDto(
         UUID activityId,
@@ -54,7 +61,8 @@ public record FeedItemDto(
         long participantCount,
         List<Participant> participantPreview,
         ZonedDateTime endTime,
-        Integer maxParticipants
+        Integer maxParticipants,
+        ParticipantStatus viewerStatus
 ) {
 
     /** One avatar in the stack: JSON keys are exactly {@code id} and {@code username}. */

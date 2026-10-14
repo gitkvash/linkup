@@ -230,6 +230,7 @@ public class FeedQueryService {
                 item.participantCount(),
                 preview,
                 item.endTime(),
-                item.maxParticipants());
+                item.maxParticipants(),
+                item.viewerStatus());
     }
 }
