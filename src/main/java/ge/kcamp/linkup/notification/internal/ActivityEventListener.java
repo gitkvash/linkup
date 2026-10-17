@@ -11,14 +11,17 @@ import ge.kcamp.linkup.activity.ActivityStartingNowEvent;
 import ge.kcamp.linkup.activity.ActivityStartingSoonEvent;
 import ge.kcamp.linkup.activity.ActivityTimeProposalAnsweredEvent;
 import ge.kcamp.linkup.activity.ActivityTimeProposedEvent;
+import ge.kcamp.linkup.activity.enums.ActivityVisibility;
 import ge.kcamp.linkup.identity.UserDirectoryService;
 import ge.kcamp.linkup.identity.UserSummary;
 import ge.kcamp.linkup.notification.CompositeNotificationDispatcher;
 import ge.kcamp.linkup.notification.NotificationMessage;
+import ge.kcamp.linkup.notification.fcm.NotificationUrgency;
 import ge.kcamp.linkup.social.FriendRequestReceivedEvent;
 import ge.kcamp.linkup.social.FriendshipAcceptedEvent;
 import ge.kcamp.linkup.social.GroupMemberAddedEvent;
 import ge.kcamp.linkup.social.GroupService;
+import ge.kcamp.linkup.social.SocialGraphService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.modulith.events.ApplicationModuleListener;
 import org.springframework.stereotype.Component;
@@ -80,6 +83,8 @@ public class ActivityEventListener {
     private final CompositeNotificationDispatcher notificationDispatcher;
     private final UserDirectoryService userDirectoryService;
     private final GroupService groupService;
+    private final SocialGraphService socialGraphService;
+    private final long influencerThreshold;
     private final ZoneId zone;
 
     /**
@@ -92,10 +97,14 @@ public class ActivityEventListener {
             CompositeNotificationDispatcher notificationDispatcher,
             UserDirectoryService userDirectoryService,
             GroupService groupService,
+            SocialGraphService socialGraphService,
+            @Value("${linkup.feed.influencer-threshold}") long influencerThreshold,
             @Value("${linkup.notification.zone:Asia/Tbilisi}") ZoneId zone) {
         this.notificationDispatcher = notificationDispatcher;
         this.userDirectoryService = userDirectoryService;
         this.groupService = groupService;
+        this.socialGraphService = socialGraphService;
+        this.influencerThreshold = influencerThreshold;
         this.zone = zone;
     }
 
@@ -164,6 +173,41 @@ public class ActivityEventListener {
                         memberId,
                         "GROUP_ACTIVITY",
                         host + " posted in " + group + ": " + event.title(),
+                        "Starts " + formatWhen(event.startTime()),
+                        Map.of("activityId", event.activityId().toString(),
+                                "otherUserId", event.creatorId().toString())))
+                .toList(), event.occurredAt());
+    }
+
+    /**
+     * A friend's new plan, for the rest of their friends: a quiet push, since it is news
+     * and not a request. The audience is the feed's - a FRIENDS or PUBLIC plan, not a
+     * group's, and nothing for an influencer, whose plans are pulled on read - minus the
+     * people who were invited by name (they get the invitation), and minus friends who
+     * muted the host. A private plan reaches nobody here.
+     */
+    @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
+    public void onFriendActivityCreated(ActivityCreatedEvent event) {
+        if (event.groupId() != null || event.visibility() == ActivityVisibility.PRIVATE
+                || event.visibility() == ActivityVisibility.GROUP) {
+            return;
+        }
+        List<UUID> friends = socialGraphService.getAcceptedFriendIds(event.creatorId());
+        if (friends.isEmpty() || friends.size() >= influencerThreshold) {
+            return;
+        }
+        Set<UUID> skipped = new HashSet<>(socialGraphService.getIdsWhoMuted(event.creatorId()));
+        skipped.addAll(event.invitedUserIds());
+        List<UUID> audience = friends.stream().filter(friendId -> !skipped.contains(friendId)).toList();
+        if (audience.isEmpty()) {
+            return;
+        }
+        String host = usernameOf(event.creatorId());
+        notificationDispatcher.dispatchAll(audience.stream()
+                .map(friendId -> new NotificationMessage(
+                        friendId,
+                        "FRIEND_ACTIVITY",
+                        host + " made a plan: " + event.title(),
                         "Starts " + formatWhen(event.startTime()),
                         Map.of("activityId", event.activityId().toString(),
                                 "otherUserId", event.creatorId().toString())))
@@ -256,6 +300,9 @@ public class ActivityEventListener {
             changes.add("Was “" + event.previousTitle() + "”");
         }
         String body = String.join(" · ", changes);
+        // A new time or place is what can leave someone standing in the wrong spot, so it
+        // is pushed loudly; a rename alone is not.
+        String urgent = String.valueOf(event.scheduleChanged() || event.placeChanged());
         notificationDispatcher.dispatchAll(event.participantIds().stream()
                 .map(participantId -> new NotificationMessage(
                         participantId,
@@ -263,7 +310,8 @@ public class ActivityEventListener {
                         host + " updated " + event.title(),
                         body,
                         Map.of("activityId", event.activityId().toString(),
-                                "otherUserId", event.hostId().toString())))
+                                "otherUserId", event.hostId().toString(),
+                                NotificationUrgency.URGENT_KEY, urgent)))
                 .toList(), event.occurredAt());
     }
 

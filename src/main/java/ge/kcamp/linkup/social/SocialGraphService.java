@@ -389,6 +389,16 @@ public class SocialGraphService {
         return new AcceptedFriends(List.copyOf(ids), Set.copyOf(muted));
     }
 
+    /**
+     * The friends who have muted this user: the ones a push about this user's new plan
+     * should skip, as their feed already does. Only meaningful off a request thread -
+     * under RLS a caller sees just their own side of each pair.
+     */
+    @Transactional(readOnly = true)
+    public Set<UUID> getIdsWhoMuted(UUID userId) {
+        return Set.copyOf(friendshipRepository.findIdsWhoMuted(userId));
+    }
+
     /** The friends this user has muted - whose plans the feed leaves out. */
     @Transactional(readOnly = true)
     public Set<UUID> getMutedIds(UUID userId) {

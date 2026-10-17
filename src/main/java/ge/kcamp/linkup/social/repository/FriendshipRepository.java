@@ -107,6 +107,19 @@ public interface FriendshipRepository extends JpaRepository<Friendship, Friendsh
     List<UUID> findMutedIds(@Param("userId") UUID userId);
 
     /**
+     * The reverse of {@link #findMutedIds}: the friends who have muted this user, by their
+     * own side's flag. Read on a system thread, to leave them out of a push.
+     */
+    @Query("""
+            SELECT CASE WHEN f.id.userAId = :userId THEN f.id.userBId ELSE f.id.userAId END
+            FROM Friendship f
+            WHERE f.status = ge.kcamp.linkup.social.enums.FriendshipStatus.ACCEPTED
+              AND ((f.id.userAId = :userId AND f.mutedByB = true)
+                OR (f.id.userBId = :userId AND f.mutedByA = true))
+            """)
+    List<UUID> findIdsWhoMuted(@Param("userId") UUID userId);
+
+    /**
      * {@link #findFriendIdsByStatus} for ACCEPTED and {@link #findMutedIds} in one read:
      * each row is {@code [friendId, mutedByThisUser]}. The feed needs both on every page.
      */

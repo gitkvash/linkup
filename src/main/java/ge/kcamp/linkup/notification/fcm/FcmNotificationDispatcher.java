@@ -105,10 +105,15 @@ public class FcmNotificationDispatcher implements NotificationDispatcher {
                     .setTitle(message.title())
                     .setBody(message.body() == null ? "" : message.body())
                     .build();
+            NotificationUrgency urgency = NotificationUrgency.of(message);
+            AndroidConfig android = androidConfig(urgency);
+            ApnsConfig apns = apnsConfig(urgency);
             for (DeviceToken token : tokens) {
                 Message.Builder messageBuilder = Message.builder()
                         .setToken(token.getId().getFcmToken())
-                        .setNotification(notification);
+                        .setNotification(notification)
+                        .setAndroidConfig(android)
+                        .setApnsConfig(apns);
                 if (message.metadata() != null) {
                     messageBuilder.putAllData(message.metadata());
                 }
@@ -135,6 +140,35 @@ public class FcmNotificationDispatcher implements NotificationDispatcher {
             }
         }
         pruneInvalidTokens(dead);
+    }
+
+    /**
+     * The channel carries the sound (see {@link NotificationUrgency}); the priority only
+     * decides whether Doze may hold the message back, which a quiet one can bear.
+     */
+    private static AndroidConfig androidConfig(NotificationUrgency urgency) {
+        return AndroidConfig.builder()
+                .setPriority(urgency == NotificationUrgency.LOUD
+                        ? AndroidConfig.Priority.HIGH
+                        : AndroidConfig.Priority.NORMAL)
+                .setNotification(AndroidNotification.builder()
+                        .setChannelId(urgency.channelId())
+                        .build())
+                .build();
+    }
+
+    /**
+     * iOS has no channels: a push either plays the default sound or arrives silently.
+     * Priority 5 lets the system batch a quiet one with other traffic.
+     */
+    private static ApnsConfig apnsConfig(NotificationUrgency urgency) {
+        boolean loud = urgency == NotificationUrgency.LOUD;
+        ApnsConfig.Builder builder = ApnsConfig.builder()
+                .putHeader("apns-priority", loud ? "10" : "5");
+        if (loud) {
+            builder.setAps(Aps.builder().setSound("default").build());
+        }
+        return builder.build();
     }
 
     private static List<DeviceToken> invalidTokens(List<DeviceToken> tokens, BatchResponse response) {
