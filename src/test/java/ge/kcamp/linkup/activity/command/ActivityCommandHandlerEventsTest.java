@@ -132,6 +132,19 @@ class ActivityCommandHandlerEventsTest {
         verify(events, never()).publishEvent(any(ActivityCancelledEvent.class));
     }
 
+    @Test
+    void deletingAPlanWhoseTimeHasPassedTellsNobodyItIsCancelled() {
+        activity.setHasTime(true);
+        activity.setStartTime(ZonedDateTime.now().minusHours(3));
+        when(participants.findUserIdsByActivityAndStatusIn(activityId, ParticipantRepository.IN_THE_PLAN))
+                .thenReturn(List.of(creatorId, UUID.randomUUID()));
+
+        handler.handle(new DeleteActivityCommand(activityId, creatorId));
+
+        verify(events).publishEvent(any(ActivityDeletedEvent.class));
+        verify(events, never()).publishEvent(any(ActivityCancelledEvent.class));
+    }
+
     private void edit(String title, ZonedDateTime start, String address) {
         when(persistence.resolveGroupId(creatorId, ActivityVisibility.FRIENDS, null)).thenReturn(null);
         handler.handle(new UpdateActivityCommand(activityId, creatorId, title, start, null, true,

@@ -198,7 +198,7 @@ public class ActivityLifecycleService {
         ZonedDateTime now = ZonedDateTime.now();
         ActivityStatusResolver.Lifecycle lifecycle = ActivityStatusResolver.Lifecycle.of(activity);
         ActivityStatus status = ActivityStatusResolver.resolve(lifecycle, now);
-        if (status.isOver()) {
+        if (status.isOver() || ActivityStatusResolver.needsCheckIn(lifecycle, now)) {
             throw new IllegalArgumentException("This plan is over, so there is nothing to remind anyone of.");
         }
         ZonedDateTime last = activity.getRemindedAt();

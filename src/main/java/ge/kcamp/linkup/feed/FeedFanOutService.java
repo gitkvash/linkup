@@ -171,7 +171,8 @@ class FeedFanOutService {
         boolean pushed = false;
         Instant after = Instant.now().minus(BACKFILL_LOOKBACK);
         for (ActivityFeedItem item : activityQueryService.findByCreatorIn(List.of(creatorId), after, friendId)) {
-            if (item.status().isOver()) {
+            // A plan waiting on its host's "did it happen?" is past, not still on.
+            if (item.status().isOver() || item.needsCheckIn()) {
                 continue;
             }
             timelineRepository.push(friendId, item.activityId(),
@@ -193,7 +194,8 @@ class FeedFanOutService {
         Instant after = Instant.now().minus(BACKFILL_LOOKBACK);
         boolean pushed = false;
         for (ActivityFeedItem item : activityQueryService.findByGroup(groupId, after, userId)) {
-            if (item.status().isOver()) {
+            // A plan waiting on its host's "did it happen?" is past, not still on.
+            if (item.status().isOver() || item.needsCheckIn()) {
                 continue;
             }
             timelineRepository.push(userId, item.activityId(),

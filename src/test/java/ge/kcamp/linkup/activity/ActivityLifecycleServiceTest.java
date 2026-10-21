@@ -290,6 +290,17 @@ class ActivityLifecycleServiceTest {
     }
 
     @Test
+    void aPlanWaitingOnItsHostsAnswerCannotBeReminded() {
+        guestsJoined(guest);
+        activity.setHasTime(true);
+        activity.setStartTime(ZonedDateTime.now().minusHours(3));
+
+        assertThatThrownBy(() -> service.remind(activityId, hostId))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(events, never()).publishEvent(any(Object.class));
+    }
+
+    @Test
     void remindingAPlanNobodyJoinedIsRefusedAndDoesNotStartTheCooldown() {
         guestsJoined(hostId);
 

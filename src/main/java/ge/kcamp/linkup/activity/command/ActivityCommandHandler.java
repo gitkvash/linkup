@@ -284,9 +284,12 @@ public class ActivityCommandHandler {
     public void handle(DeleteActivityCommand command) {
         Activity activity = requireOwned(command.activityId(), command.actorId());
         // Nobody is told a plan that already happened, or was already called off, is
-        // cancelled - the second would repeat what the first cancel said.
-        boolean alreadyOver = ActivityStatusResolver.resolve(
-                ActivityStatusResolver.Lifecycle.of(activity), ZonedDateTime.now()).isOver();
+        // cancelled - the second would repeat what the first cancel said. Nor one whose
+        // time has gone by while its host was being asked whether it happened.
+        ActivityStatusResolver.Lifecycle lifecycle = ActivityStatusResolver.Lifecycle.of(activity);
+        ZonedDateTime moment = ZonedDateTime.now();
+        boolean alreadyOver = ActivityStatusResolver.resolve(lifecycle, moment).isOver()
+                || ActivityStatusResolver.needsCheckIn(lifecycle, moment);
         List<UUID> participants = alreadyOver ? List.of() : participantRepository
                 .findUserIdsByActivityAndStatusIn(activity.getId(), ParticipantRepository.IN_THE_PLAN)
                 .stream()
