@@ -547,7 +547,9 @@ check "the terms endpoint needs a token" 401 "$(code "$API/users/me/terms")"
 
 echo "== plan details: note, meeting point, limit, maybe (create_activity_requests.dart, activity_api.dart) =="
 # PUBLIC so a third account can try to join it: the limit is about who is *not* in the plan.
-C="cc_c_$STAMP"
+# Its own account: cc_c is already registered in the fan-out section above, so
+# registering it again was a 409 with no token, and every call as C a 401.
+C="cc_e_$STAMP"
 RC=$(reg "$C"); TC=$(jsonf "$RC" token); AUTHC="Authorization: Bearer $TC"
 CAP=$(curl -s -X POST "$API/activities" -H "$JSON" -H "$AUTHA" -d '{
   "title":"Capped plan","startTime":"2031-06-01T14:00:00.000Z","hasTime":true,

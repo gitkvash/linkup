@@ -12,6 +12,7 @@ import ge.kcamp.linkup.activity.command.CreateStructuredActivityCommand;
 import ge.kcamp.linkup.activity.command.DeleteActivityCommand;
 import ge.kcamp.linkup.activity.command.UpdateActivityCommand;
 import ge.kcamp.linkup.activity.dto.CancelRequest;
+import ge.kcamp.linkup.activity.dto.CheckInRequest;
 import ge.kcamp.linkup.activity.dto.CreateStructuredActivityRequest;
 import ge.kcamp.linkup.activity.dto.InviteRequest;
 import ge.kcamp.linkup.activity.dto.ParticipationDto;
@@ -235,7 +236,8 @@ public class ActivityController {
 
     /**
      * The host says it has begun - the only way a plan goes live. One nobody starts is
-     * cancelled two hours after its start time (see {@code ActivityStatusResolver}).
+     * put to its host two hours after its start time ({@link #checkIn}), and cancelled if
+     * they don't answer within a day (see {@code ActivityStatusResolver}).
      * <p>
      * Answers with the read model, so the client can render the new status without a
      * follow-up GET. Creator only; everyone else gets the 404 that editing gives.
@@ -249,6 +251,22 @@ public class ActivityController {
     public ResponseEntity<ActivityFeedItem> start(@PathVariable UUID id) {
         UUID actorId = UserContext.getUserId();
         activityLifecycleService.start(id, actorId);
+        return activityQueryService.findById(id, actorId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    /**
+     * The host answers "did it happen?" for a past one-off nobody started: {@code true}
+     * records it as having happened (ended), {@code false} cancels it. Pushes nothing.
+     * Creator only (404 otherwise); 400 for a repeating plan or before the question is due.
+     */
+    @Transactional
+    @PostMapping("/{id}/check-in")
+    public ResponseEntity<ActivityFeedItem> checkIn(
+            @PathVariable UUID id, @Valid @RequestBody CheckInRequest request) {
+        UUID actorId = UserContext.getUserId();
+        activityLifecycleService.checkIn(id, actorId, request.happened());
         return activityQueryService.findById(id, actorId)
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());

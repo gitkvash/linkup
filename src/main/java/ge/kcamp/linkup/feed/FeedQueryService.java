@@ -231,6 +231,7 @@ public class FeedQueryService {
                 preview,
                 item.endTime(),
                 item.maxParticipants(),
-                item.viewerStatus());
+                item.viewerStatus(),
+                item.needsCheckIn());
     }
 }

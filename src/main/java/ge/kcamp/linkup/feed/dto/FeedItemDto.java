@@ -44,6 +44,8 @@ import java.util.UUID;
  *                        mixes plans the viewer is in with plans they are not, had no way to
  *                        tell them apart. A plan the viewer created has no participant row
  *                        of its own here; the client reads that from {@code creatorId}.
+ * @param needsCheckIn    the host has yet to say whether this past plan happened; the same
+ *                        field {@code ActivityFeedItem} carries.
  */
 public record FeedItemDto(
         UUID activityId,
@@ -62,7 +64,8 @@ public record FeedItemDto(
         List<Participant> participantPreview,
         ZonedDateTime endTime,
         Integer maxParticipants,
-        ParticipantStatus viewerStatus
+        ParticipantStatus viewerStatus,
+        boolean needsCheckIn
 ) {
 
     /** One avatar in the stack: JSON keys are exactly {@code id} and {@code username}. */

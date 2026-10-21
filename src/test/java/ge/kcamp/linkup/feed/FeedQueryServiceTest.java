@@ -154,7 +154,7 @@ class FeedQueryServiceTest {
         ActivityFeedItem joined = new ActivityFeedItem(base.activityId(), creator, "cara", "Cara", "Dinner",
                 ActivityType.SPECIFIC_EVENT, ActivityVisibility.PUBLIC, base.startTime(), null, true, "Somewhere",
                 null, null, 2, ParticipantStatus.JOINED, null, null, ActivityCategory.FOOD_AND_DRINK, null, null,
-                null, ActivityStatus.UPCOMING, null, null, null);
+                null, ActivityStatus.UPCOMING, null, null, null, false);
         Map<UUID, UserSummary> people = Map.of(creator, person(creator, "cara", "Cara"));
 
         assertThat(FeedQueryService.toDto(joined, people, List.of()).viewerStatus())
@@ -174,6 +174,6 @@ class FeedQueryServiceTest {
         return new ActivityFeedItem(id, creator, "cara", "Cara", "Dinner", ActivityType.SPECIFIC_EVENT,
                 ActivityVisibility.PUBLIC, start, null, true, "Somewhere", null, null, participantCount,
                 null, null, null, ActivityCategory.FOOD_AND_DRINK, null, null, null, ActivityStatus.UPCOMING,
-                null, null, null);
+                null, null, null, false);
     }
 }

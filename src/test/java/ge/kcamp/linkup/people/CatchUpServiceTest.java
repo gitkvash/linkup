@@ -185,6 +185,6 @@ class CatchUpServiceTest {
                 UUID.randomUUID(), me, "me", "Me", title, ActivityType.SPECIFIC_EVENT,
                 ActivityVisibility.FRIENDS, start, null, true, null, null, null, 2,
                 null, null, null, category, null, null, null, ActivityStatus.ENDED,
-                null, null, null);
+                null, null, null, false);
     }
 }

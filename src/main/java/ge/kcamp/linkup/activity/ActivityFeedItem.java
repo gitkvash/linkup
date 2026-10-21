@@ -44,6 +44,11 @@ import java.util.UUID;
  *                         {@code creatorId}, so the detail screen's "Organiser" row
  *                         showed every plan - including your own - as "User aa0d…2ef".
  *                         Null if the account has since been removed.
+ * @param needsCheckIn     the plan's time has passed, nobody started it, and its host has
+ *                         yet to say whether it happened - see
+ *                         {@link ActivityStatusResolver#needsCheckIn}. {@code status} is
+ *                         still UPCOMING meanwhile; this is what lets the client show
+ *                         "did it happen?" rather than a plan that is still ahead.
  */
 public record ActivityFeedItem(
         UUID activityId,
@@ -70,6 +75,7 @@ public record ActivityFeedItem(
         ActivityStatus status,
         String description,
         String meetingPoint,
-        Integer maxParticipants
+        Integer maxParticipants,
+        boolean needsCheckIn
 ) {
 }

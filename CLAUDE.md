@@ -65,6 +65,17 @@ the "plan updated" notice, minus the proposer), sets the proposer `JOINED`, and 
 open suggestions. Repeating plans are refused: moving the anchor moves the whole series. Rows are
 never deleted by the app (no `DELETE` grant); only `status` changes.
 
+## "Did it happen?" (host check-in)
+
+A one-off nobody started stays `UPCOMING` for `ActivityStatusResolver.CHECK_IN_WINDOW` (24 h) past
+its `START_GRACE` (2 h; a date-only plan's is the end of its day), with `needsCheckIn` true on the
+read model. After that it reads `CANCELLED`. Nothing is stored or scheduled for the cancel; it is
+derived. `ActivityReminderScheduler` sends the host `ActivityCheckInDueEvent` →
+`ACTIVITY_CHECK_IN` at the 2 h mark (timed plans only), and `POST /activities/{id}/check-in`
+(`ActivityLifecycleService.checkIn`) records yes as a run from the start time (ended) or no as
+cancelled, publishing only `ActivityChangedEvent`. `ActivityStatusSql.NOT_OVER` deliberately still
+treats these plans as over at 2 h, so the map and places drop them. Repeating plans are never asked.
+
 ## Plan details, limits and "maybe"
 
 `V41` adds `description`, `meeting_point` and `max_participants` (2+, host included, null = no limit) to

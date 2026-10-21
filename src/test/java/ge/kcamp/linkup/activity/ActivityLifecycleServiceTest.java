@@ -145,6 +145,78 @@ class ActivityLifecycleServiceTest {
     }
 
     @Test
+    void sayingItHappenedRecordsTheRunItWasPlannedAsAndPushesNothing() {
+        ZonedDateTime start = ZonedDateTime.now().minusHours(5);
+        activity.setHasTime(true);
+        activity.setStartTime(start);
+
+        service.checkIn(activityId, hostId, true);
+
+        assertThat(activity.getStartedAt()).isEqualTo(start);
+        assertThat(activity.getEndedAt()).isEqualTo(start.plus(ActivityStatusResolver.DEFAULT_DURATION));
+        assertThat(activity.getCancelledAt()).isNull();
+        verify(events).publishEvent(any(ActivityChangedEvent.class));
+        verify(events, never()).publishEvent(any(ActivityStartedEvent.class));
+    }
+
+    @Test
+    void sayingItDidNotHappenCancelsItWithoutTellingAnyone() {
+        activity.setHasTime(true);
+        activity.setStartTime(ZonedDateTime.now().minusHours(3));
+
+        service.checkIn(activityId, hostId, false);
+
+        assertThat(activity.getCancelledAt()).isNotNull();
+        assertThat(activity.getStartedAt()).isNull();
+        verify(events, never()).publishEvent(any(ActivityCancelledEvent.class));
+        verify(events).publishEvent(any(ActivityChangedEvent.class));
+    }
+
+    @Test
+    void theHostCanStillSayItHappenedAfterTheClockCancelledIt() {
+        activity.setHasTime(true);
+        activity.setStartTime(ZonedDateTime.now().minusDays(3));
+
+        service.checkIn(activityId, hostId, true);
+
+        assertThat(activity.getStartedAt()).isEqualTo(activity.getStartTime());
+        assertThat(activity.getEndedAt()).isNotNull();
+    }
+
+    @Test
+    void checkingInBeforeTheQuestionIsDueIsRefused() {
+        activity.setHasTime(true);
+        activity.setStartTime(ZonedDateTime.now().minusMinutes(30));
+
+        assertThatThrownBy(() -> service.checkIn(activityId, hostId, true))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(activity.getStartedAt()).isNull();
+    }
+
+    @Test
+    void aPlanAlreadyAnsweredIsLeftAsItIs() {
+        ZonedDateTime cancelled = ZonedDateTime.now().minusHours(1);
+        activity.setHasTime(true);
+        activity.setStartTime(ZonedDateTime.now().minusHours(3));
+        activity.setCancelledAt(cancelled);
+
+        service.checkIn(activityId, hostId, true);
+
+        assertThat(activity.getCancelledAt()).isEqualTo(cancelled);
+        assertThat(activity.getStartedAt()).isNull();
+        verify(events, never()).publishEvent(any(Object.class));
+    }
+
+    @Test
+    void onlyTheHostCanCheckIn() {
+        activity.setHasTime(true);
+        activity.setStartTime(ZonedDateTime.now().minusHours(3));
+
+        assertThatThrownBy(() -> service.checkIn(activityId, guest, true))
+                .isInstanceOf(ActivityNotVisibleException.class);
+    }
+
+    @Test
     void someoneElsesPlanCannotBeCancelled() {
         assertThatThrownBy(() -> service.cancel(activityId, guest, null))
                 .isInstanceOf(ActivityNotVisibleException.class);

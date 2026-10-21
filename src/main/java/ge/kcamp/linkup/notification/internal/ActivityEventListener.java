@@ -1,6 +1,7 @@
 package ge.kcamp.linkup.notification.internal;
 
 import ge.kcamp.linkup.activity.ActivityCancelledEvent;
+import ge.kcamp.linkup.activity.ActivityCheckInDueEvent;
 import ge.kcamp.linkup.activity.ActivityCreatedEvent;
 import ge.kcamp.linkup.activity.ActivityEditedEvent;
 import ge.kcamp.linkup.activity.ActivityInvitationDeclinedEvent;
@@ -9,6 +10,7 @@ import ge.kcamp.linkup.activity.ActivityRemindedEvent;
 import ge.kcamp.linkup.activity.ActivityStartedEvent;
 import ge.kcamp.linkup.activity.ActivityStartingNowEvent;
 import ge.kcamp.linkup.activity.ActivityStartingSoonEvent;
+import ge.kcamp.linkup.activity.ActivityStatusResolver;
 import ge.kcamp.linkup.activity.ActivityTimeProposalAnsweredEvent;
 import ge.kcamp.linkup.activity.ActivityTimeProposedEvent;
 import ge.kcamp.linkup.activity.enums.ActivityVisibility;
@@ -342,9 +344,9 @@ public class ActivityEventListener {
     /**
      * An occurrence has reached its start time and its host hasn't started it. The host
      * is told what only they can do - a plan no longer starts by itself, and one nobody
-     * starts is cancelled two hours in. Dropped once it is more than a few minutes stale
-     * (a retried publication): "starting now" about something from an hour ago only
-     * misleads.
+     * starts is put back to them two hours in ({@link #onCheckInDue}). Dropped once it is
+     * more than a few minutes stale (a retried publication): "starting now" about
+     * something from an hour ago only misleads.
      */
     @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
     public void onActivityStartingNow(ActivityStartingNowEvent event) {
@@ -358,10 +360,34 @@ public class ActivityEventListener {
                         "ACTIVITY_STARTING",
                         event.title() + " starts now",
                         participantId.equals(event.hostId())
-                                ? "Start it when everyone's there, or it's cancelled in two hours."
+                                ? "Tap Start when everyone's there."
                                 : "It was planned for " + at + ".",
                         Map.of("activityId", event.activityId().toString())))
                 .toList(), event.occurredAt());
+    }
+
+    /**
+     * "Did it happen?", for the host of a one-off nobody started, two hours after its
+     * start. Says what happens if they don't answer, because that is the only reason to
+     * answer at all. Dropped once the question has closed (a publication retried a day
+     * late): by then the plan already reads as cancelled.
+     */
+    @ApplicationModuleListener(propagation = Propagation.NOT_SUPPORTED)
+    public void onCheckInDue(ActivityCheckInDueEvent event) {
+        Instant closes = event.startTime().toInstant()
+                .plus(ActivityStatusResolver.START_GRACE)
+                .plus(ActivityStatusResolver.CHECK_IN_WINDOW);
+        if (Instant.now().isAfter(closes)) {
+            return;
+        }
+        String at = TIME.format(event.startTime().withZoneSameInstant(zone));
+        notificationDispatcher.dispatch(new NotificationMessage(
+                event.hostId(),
+                "ACTIVITY_CHECK_IN",
+                "Did " + event.title() + " happen?",
+                "It was planned for " + at + ". Let everyone know if it went ahead."
+                        + " No answer in 24 hours and it's marked as cancelled.",
+                Map.of("activityId", event.activityId().toString())), event.occurredAt());
     }
 
     /**

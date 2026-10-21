@@ -38,6 +38,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * cancelled gets neither. The second matters more than it did: a plan no longer starts
  * by itself, so it is also the host's cue to start it.
  * <p>
+ * A third notice is for the host alone: {@link ActivityCheckInDueEvent}, "did it happen?",
+ * {@link ActivityStatusResolver#START_GRACE} after the start of a one-off nobody started.
+ * Repeating plans aren't asked, and date-only ones are left to the app: their question
+ * falls due at midnight.
+ * <p>
  * Each notice has its own window, and each scan covers the slice of it the previous scan
  * didn't: {@code (scannedUpTo, now + lead]}. So a notice goes out once rather than on
  * every scan - and a plan created with less than the lead to go gets no 30-minute one,
@@ -69,6 +74,13 @@ class ActivityReminderScheduler {
      */
     static final Duration STARTING_NOW_CATCH_UP = Duration.ofMinutes(5);
 
+    /**
+     * How late "did it happen?" may still go out. Longer than the others: the question
+     * stays open for a day, so asking a few hours late is still worth it, and the app asks
+     * again when it opens anyway.
+     */
+    static final Duration CHECK_IN_CATCH_UP = Duration.ofHours(3);
+
     private final ActivityRepository activityRepository;
     private final ParticipantRepository participantRepository;
     private final ApplicationEventPublisher eventPublisher;
@@ -76,6 +88,7 @@ class ActivityReminderScheduler {
     private final TaskExecutor executor;
     private final Window soon;
     private final Window startingNow;
+    private final Window checkIn;
     private final Duration interval;
     private final Clock clock;
     private final AtomicBoolean running = new AtomicBoolean();
@@ -111,6 +124,7 @@ class ActivityReminderScheduler {
         this.executor = executor;
         this.soon = new Window(lead, lead);
         this.startingNow = new Window(Duration.ZERO, STARTING_NOW_CATCH_UP);
+        this.checkIn = new Window(ActivityStatusResolver.START_GRACE.negated(), CHECK_IN_CATCH_UP);
         this.interval = interval;
         this.clock = clock;
     }
@@ -158,6 +172,8 @@ class ActivityReminderScheduler {
             ZonedDateTime soonTo = now.plus(soon.lead);
             ZonedDateTime nowFrom = startingNow.from(now);
             ZonedDateTime nowTo = now.plus(startingNow.lead);
+            ZonedDateTime askFrom = checkIn.from(now);
+            ZonedDateTime askTo = now.plus(checkIn.lead);
             transaction.executeWithoutResult(status -> {
                 if (soonTo.isAfter(soonFrom)) {
                     notify(soonFrom, soonTo, now, (activity, start, going) -> new ActivityStartingSoonEvent(
@@ -168,9 +184,13 @@ class ActivityReminderScheduler {
                             activity.getId(), activity.getCreatorId(), activity.getTitle(), start, going,
                             start.toInstant()));
                 }
+                if (askTo.isAfter(askFrom)) {
+                    askHosts(askFrom, askTo, now);
+                }
             });
             soon.scannedUpTo = soonTo;
             startingNow.scannedUpTo = nowTo;
+            checkIn.scannedUpTo = askTo;
         } catch (RuntimeException e) {
             // Must not kill the schedule. The windows stay put, so the next scan retries them.
             log.warn("Activity reminder scan failed: {}", e.getMessage());
@@ -199,6 +219,25 @@ class ActivityReminderScheduler {
                 continue;
             }
             eventPublisher.publishEvent(notice.of(activity, start, going));
+        }
+    }
+
+    /**
+     * One-offs that started in {@code (from, to]} - so whose grace ran out since the last
+     * scan - and still need their host's answer. Asked whether anyone joined or not: a
+     * plan can happen with people who never pressed join.
+     */
+    private void askHosts(ZonedDateTime from, ZonedDateTime to, ZonedDateTime now) {
+        for (Activity activity : activityRepository.findReminderCandidates(from, to)) {
+            if (activity.getRepeatFrequency() != null) {
+                continue;
+            }
+            if (!ActivityStatusResolver.needsCheckIn(ActivityStatusResolver.Lifecycle.of(activity), now)) {
+                continue;
+            }
+            eventPublisher.publishEvent(new ActivityCheckInDueEvent(
+                    activity.getId(), activity.getCreatorId(), activity.getTitle(),
+                    activity.getStartTime(), activity.getStartTime().toInstant()));
         }
     }
 

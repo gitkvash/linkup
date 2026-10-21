@@ -10,6 +10,11 @@ package ge.kcamp.linkup.activity;
  * already used the row. Keep them in step. The one simplification here is repetition -
  * SQL walks no occurrences, so a repeating plan whose rule has not run out is simply not
  * over, which is the only thing a filter needs to know.
+ * <p>
+ * One deliberate difference: a one-off waiting on its host's "did it happen?"
+ * ({@link ActivityStatusResolver#needsCheckIn}) is UPCOMING to the resolver, but over
+ * here. Its time has gone by, so it has no business as a pin on the map or a plan at a
+ * place; it only stays open so the host can answer.
  */
 public final class ActivityStatusSql {
 
@@ -26,7 +31,8 @@ public final class ActivityStatusSql {
      * Neither ended nor cancelled. Requires the {@code activities} table to be aliased
      * {@code a}. Wrapped in parentheses so it can be AND-ed into any WHERE clause safely.
      * <p>
-     * A plan nobody started is over two hours after its start time (cancelled); a
+     * A plan nobody started is over two hours after its start time (to a filter; see
+     * the class comment for the one-off still waiting on its host); a
      * date-only one a day after its start, which is stored at the creator's local
      * midnight - the same rule the resolver uses. Not {@code date_trunc('day', ...)}:
      * that truncates in the server's zone (UTC), which ended a Tbilisi plan at 04:00 on

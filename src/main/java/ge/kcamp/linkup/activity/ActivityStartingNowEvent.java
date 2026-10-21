@@ -11,8 +11,9 @@ import java.util.UUID;
  * {@link ActivityStartingSoonEvent}.
  * <p>
  * A plan no longer starts by itself, so this is also the host's prompt: they are the one
- * who has to press start, and the plan is cancelled if nobody does within
- * {@link ActivityStatusResolver#START_GRACE}.
+ * who has to press start. If nobody does within
+ * {@link ActivityStatusResolver#START_GRACE}, the host is asked whether it happened
+ * ({@link ActivityCheckInDueEvent}).
  *
  * @param hostId         so the host's copy can say what only they can do about it
  * @param startTime      when this occurrence starts - for a repeating plan, not the

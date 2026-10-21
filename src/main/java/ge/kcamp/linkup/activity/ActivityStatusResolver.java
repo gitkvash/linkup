@@ -18,8 +18,11 @@ import java.time.ZonedDateTime;
  * <p>
  * What <em>is</em> stored is what the host did: {@code startedAt}, {@code endedAt} and
  * {@code cancelledAt}. A plan never starts by the clock - it is live only once its host
- * says so. One that nobody started within {@link #START_GRACE} of its start time didn't
- * happen, and reads as cancelled.
+ * says so. A one-off that nobody started within {@link #START_GRACE} of its start time is
+ * put to its host - "did it happen?" - and stays upcoming while they have
+ * {@link #CHECK_IN_WINDOW} to answer ({@link #needsCheckIn}). Unanswered past that, it
+ * didn't happen, and reads as cancelled. A repeating plan isn't asked: a missed
+ * occurrence just gives way to the next one.
  * <p>
  * Keep it in step with {@link ActivityStatusSql}, which says the same thing in SQL for the
  * queries that have to filter on it. If the two drift, a plan can be missing from the map
@@ -36,6 +39,14 @@ public final class ActivityStatusResolver {
      * forever would sit among the real ones in every list.
      */
     public static final Duration START_GRACE = Duration.ofHours(2);
+
+    /**
+     * How long the host of a one-off nobody started has to say whether it happened,
+     * counted from the end of {@link #START_GRACE}. The plan stays upcoming meanwhile - it
+     * is not the app's to call off a plan that may well have gone ahead - and reads as
+     * cancelled once this runs out unanswered.
+     */
+    public static final Duration CHECK_IN_WINDOW = Duration.ofHours(24);
 
     /**
      * How long a started plan runs when nothing says otherwise. An explicit end time wins
@@ -109,9 +120,47 @@ public final class ActivityStatusResolver {
      */
     private static ActivityStatus untouched(Lifecycle plan, ZonedDateTime now, ZonedDateTime first) {
         ZonedDateTime occurrence = currentOccurrence(plan, now, first);
-        return now.isBefore(deadline(plan, occurrence))
+        ZonedDateTime deadline = deadline(plan, occurrence);
+        if (plan.repeatFrequency() == null) {
+            deadline = deadline.plus(CHECK_IN_WINDOW);
+        }
+        return now.isBefore(deadline)
                 ? ActivityStatus.UPCOMING
                 : ActivityStatus.CANCELLED;
+    }
+
+    /**
+     * Whether the host owes an answer to "did it happen?": a one-off nobody started,
+     * ended or cancelled, past its {@link #START_GRACE} (a date-only one past its day) and
+     * still inside {@link #CHECK_IN_WINDOW}. Its status meanwhile is
+     * {@link ActivityStatus#UPCOMING}; this is what tells it apart from a plan that is
+     * actually still ahead. Viewer-independent - only the host can answer, but everyone
+     * can see that the question is open.
+     */
+    public static boolean needsCheckIn(Lifecycle plan, ZonedDateTime now) {
+        if (plan.repeatFrequency() != null || plan.cancelledAt() != null
+                || plan.startedAt() != null || plan.endedAt() != null) {
+            return false;
+        }
+        ZonedDateTime asked = checkInDueAt(plan);
+        return !now.isBefore(asked) && now.isBefore(asked.plus(CHECK_IN_WINDOW));
+    }
+
+    /**
+     * When a one-off's host is asked whether it happened: {@link #START_GRACE} after its
+     * start, or the end of its day for a date-only plan.
+     */
+    public static ZonedDateTime checkInDueAt(Lifecycle plan) {
+        return deadline(plan, plan.startTime());
+    }
+
+    /**
+     * When a run that began at the plan's own start time would have finished: its end
+     * time, or {@link #DEFAULT_DURATION} after the start. What "yes, it happened" records
+     * as the end, since nobody said when it actually did.
+     */
+    public static ZonedDateTime scheduledEnd(Lifecycle plan) {
+        return plan.startTime().plus(duration(plan));
     }
 
     /**

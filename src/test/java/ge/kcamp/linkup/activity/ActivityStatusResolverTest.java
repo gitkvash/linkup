@@ -32,9 +32,42 @@ class ActivityStatusResolverTest {
     }
 
     @Test
-    void aPlanNobodyStartedIsCancelledTwoHoursIn() {
-        assertThat(resolve(plan(NOW.minusHours(2)))).isEqualTo(ActivityStatus.CANCELLED);
+    void aOneOffNobodyStartedIsPutToItsHostTwoHoursIn() {
+        Lifecycle missed = plan(NOW.minusHours(2));
+        assertThat(resolve(missed)).isEqualTo(ActivityStatus.UPCOMING);
+        assertThat(ActivityStatusResolver.needsCheckIn(missed, NOW)).isTrue();
+
+        Lifecycle notYet = plan(NOW.minusMinutes(119));
+        assertThat(ActivityStatusResolver.needsCheckIn(notYet, NOW)).isFalse();
+    }
+
+    @Test
+    void anUnansweredCheckInCancelsThePlanADayAfterItWasAsked() {
+        Lifecycle almost = plan(NOW.minusHours(26).plusMinutes(1));
+        assertThat(resolve(almost)).isEqualTo(ActivityStatus.UPCOMING);
+        assertThat(ActivityStatusResolver.needsCheckIn(almost, NOW)).isTrue();
+
+        Lifecycle unanswered = plan(NOW.minusHours(26));
+        assertThat(resolve(unanswered)).isEqualTo(ActivityStatus.CANCELLED);
+        assertThat(ActivityStatusResolver.needsCheckIn(unanswered, NOW)).isFalse();
         assertThat(resolve(plan(NOW.minusDays(3)))).isEqualTo(ActivityStatus.CANCELLED);
+    }
+
+    @Test
+    void aPlanTheHostAlreadyStartedEndedOrCancelledIsNeverAsked() {
+        ZonedDateTime start = NOW.minusHours(3);
+        assertThat(ActivityStatusResolver.needsCheckIn(started(start, null, start), NOW)).isFalse();
+        assertThat(ActivityStatusResolver.needsCheckIn(
+                new Lifecycle(start, null, true, null, null, null, null, null, start), NOW)).isFalse();
+        assertThat(ActivityStatusResolver.needsCheckIn(
+                new Lifecycle(start, null, true, null, null, null, start, start, null), NOW)).isFalse();
+    }
+
+    @Test
+    void aRepeatingPlanIsNeverAsked() {
+        Lifecycle weekly = new Lifecycle(
+                NOW.minusWeeks(2).minusHours(3), null, true, RepeatFrequency.WEEKLY, 1, null, null, null, null);
+        assertThat(ActivityStatusResolver.needsCheckIn(weekly, NOW)).isFalse();
     }
 
     @Test
@@ -88,14 +121,18 @@ class ActivityStatusResolverTest {
     }
 
     @Test
-    void aDateOnlyPlanNeverStartsByItselfAndIsCancelledAtTheEndOfItsDay() {
+    void aDateOnlyPlanNeverStartsByItselfAndIsAskedAboutAtTheEndOfItsDay() {
         // has_time false means the start time is midnight, which nobody chose - so there
         // is no two-hour grace from it, only the day.
         ZonedDateTime midnight = NOW.toLocalDate().atStartOfDay(NOW.getZone());
         Lifecycle allDay = new Lifecycle(midnight, null, false, null, null, null, null, null, null);
 
         assertThat(resolve(allDay)).isEqualTo(ActivityStatus.UPCOMING);
-        assertThat(ActivityStatusResolver.resolve(allDay, midnight.plusDays(1)))
+        assertThat(ActivityStatusResolver.needsCheckIn(allDay, NOW)).isFalse();
+        assertThat(ActivityStatusResolver.needsCheckIn(allDay, midnight.plusDays(1))).isTrue();
+        assertThat(ActivityStatusResolver.resolve(allDay, midnight.plusDays(2).minusMinutes(1)))
+                .isEqualTo(ActivityStatus.UPCOMING);
+        assertThat(ActivityStatusResolver.resolve(allDay, midnight.plusDays(2)))
                 .isEqualTo(ActivityStatus.CANCELLED);
     }
 
@@ -111,10 +148,11 @@ class ActivityStatusResolverTest {
         ZonedDateTime tbilisiMidday = ZonedDateTime.parse("2031-03-04T08:00:00Z");
         assertThat(ActivityStatusResolver.resolve(allDay, tbilisiMidday))
                 .isEqualTo(ActivityStatus.UPCOMING);
-        assertThat(ActivityStatusResolver.resolve(allDay, tbilisiMidnightInUtc.plusDays(1).minusMinutes(1)))
-                .isEqualTo(ActivityStatus.UPCOMING);
-        assertThat(ActivityStatusResolver.resolve(allDay, tbilisiMidnightInUtc.plusDays(1)))
-                .isEqualTo(ActivityStatus.CANCELLED);
+        assertThat(ActivityStatusResolver.needsCheckIn(allDay, tbilisiMidday)).isFalse();
+        assertThat(ActivityStatusResolver.needsCheckIn(allDay, tbilisiMidnightInUtc.plusDays(1).minusMinutes(1)))
+                .isFalse();
+        assertThat(ActivityStatusResolver.needsCheckIn(allDay, tbilisiMidnightInUtc.plusDays(1)))
+                .isTrue();
     }
 
     @Test

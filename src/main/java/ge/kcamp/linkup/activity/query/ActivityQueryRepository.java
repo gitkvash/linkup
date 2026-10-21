@@ -266,6 +266,17 @@ public class ActivityQueryRepository {
         ZonedDateTime startTime = rs.getObject("start_time", OffsetDateTime.class).toZonedDateTime();
         ZonedDateTime endsAt = endTime == null ? null : endTime.toZonedDateTime();
         RepeatFrequency frequency = repeatFreq == null ? null : RepeatFrequency.valueOf(repeatFreq);
+        ActivityStatusResolver.Lifecycle lifecycle = new ActivityStatusResolver.Lifecycle(
+                startTime,
+                endsAt,
+                rs.getBoolean("has_time"),
+                frequency,
+                repeatInterval,
+                repeatUntil == null ? null : repeatUntil.toZonedDateTime(),
+                startedAt == null ? null : startedAt.toZonedDateTime(),
+                endedAt == null ? null : endedAt.toZonedDateTime(),
+                cancelledAt == null ? null : cancelledAt.toZonedDateTime());
+        ZonedDateTime now = ZonedDateTime.now();
 
         return new ActivityFeedItem(
                 (UUID) rs.getObject("activity_id"),
@@ -289,22 +300,12 @@ public class ActivityQueryRepository {
                 frequency,
                 repeatInterval,
                 repeatUntil == null ? null : repeatUntil.toZonedDateTime(),
-                ActivityStatusResolver.resolve(
-                        new ActivityStatusResolver.Lifecycle(
-                                startTime,
-                                endsAt,
-                                rs.getBoolean("has_time"),
-                                frequency,
-                                repeatInterval,
-                                repeatUntil == null ? null : repeatUntil.toZonedDateTime(),
-                                startedAt == null ? null : startedAt.toZonedDateTime(),
-                                endedAt == null ? null : endedAt.toZonedDateTime(),
-                                cancelledAt == null ? null : cancelledAt.toZonedDateTime()),
-                        ZonedDateTime.now()),
+                ActivityStatusResolver.resolve(lifecycle, now),
                 rs.getString("description"),
                 rs.getString("meeting_point"),
                 // getInt() answers 0 for SQL NULL, and "limit 0" is not "no limit".
-                rs.getObject("max_participants") == null ? null : rs.getInt("max_participants")
+                rs.getObject("max_participants") == null ? null : rs.getInt("max_participants"),
+                ActivityStatusResolver.needsCheckIn(lifecycle, now)
         );
     }
 }

@@ -18,17 +18,24 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * The host's hand on their own plan: start it, end it, cancel it.
+ * The host's hand on their own plan: start it, end it, cancel it, or say afterwards
+ * whether it happened.
  * <p>
- * Starting is the only way a plan goes live - nothing starts by the clock. A plan its
- * host never starts is cancelled by the clock instead, {@link ActivityStatusResolver#START_GRACE}
- * after its start time (see {@link ActivityStatusResolver}). Ending is for the plan that's
- * over before its window is up; cancelling for the one that won't happen, while keeping
- * it visible to the people who were in it - deleting it removes it for everyone.
+ * Starting is the only way a plan goes live - nothing starts by the clock. A one-off its
+ * host never starts is put to them {@link ActivityStatusResolver#START_GRACE} after its
+ * start time ({@link #checkIn}), and is cancelled by the clock if they don't answer within
+ * {@link ActivityStatusResolver#CHECK_IN_WINDOW} (see {@link ActivityStatusResolver}).
+ * Ending is for the plan that's over before its window is up; cancelling for the one
+ * that won't happen, while keeping it visible to the people who were in it - deleting
+ * it removes it for everyone.
  * <p>
  * Only the creator may. A non-creator gets the same {@link ActivityNotVisibleException}
  * (404) that editing someone else's plan gives, rather than a 403 confirming the plan
  * exists.
+ * <p>
+ * Start, end, cancel and check-in {@code saveAndFlush}: the controller answers each with the
+ * read model, read over JDBC in the same transaction, and an unflushed write is invisible to
+ * it - the response came back with the status from before the change.
  */
 @Service
 public class ActivityLifecycleService {
@@ -69,7 +76,7 @@ public class ActivityLifecycleService {
         activity.setStartedAt(now);
         activity.setEndedAt(null);
         activity.setCancelledAt(null);
-        activityRepository.save(activity);
+        activityRepository.saveAndFlush(activity);
 
         List<UUID> participants = othersInThePlan(activity);
         if (!participants.isEmpty()) {
@@ -93,7 +100,7 @@ public class ActivityLifecycleService {
             activity.setCancelledAt(null);
         }
         activity.setEndedAt(now);
-        activityRepository.save(activity);
+        activityRepository.saveAndFlush(activity);
         // Ending notifies nobody, so this is the only way the people in the plan see it end.
         eventPublisher.publishEvent(new ActivityChangedEvent(activityId, now.toInstant()));
     }
@@ -126,7 +133,7 @@ public class ActivityLifecycleService {
                     "Keep the reason under " + CancelRequest.MAX_REASON + " characters.");
         }
         activity.setCancelledAt(now);
-        activityRepository.save(activity);
+        activityRepository.saveAndFlush(activity);
 
         List<UUID> participants = othersInThePlan(activity);
         if (!participants.isEmpty()) {
@@ -134,6 +141,46 @@ public class ActivityLifecycleService {
                     activityId, actorId, activity.getTitle(), activity.getStartTime(),
                     activity.isHasTime(), participants, trimmed.isEmpty() ? null : trimmed, now.toInstant()));
         }
+    }
+
+    /**
+     * The host's answer to "did it happen?" for a one-off nobody started.
+     * <p>
+     * Yes records the run it was planned as - from its start time to its end time or
+     * {@link ActivityStatusResolver#DEFAULT_DURATION} later, but never past now - so it
+     * reads as ended and counts as a plan done together. No cancels it. Neither pushes
+     * anything: the time has already gone by and the people in it were there, or weren't;
+     * an {@link ActivityChangedEvent} just brings their screens up to date.
+     * <p>
+     * Allowed from the moment the question is asked, and still after the window has run
+     * out and the clock cancelled it - the host is the authority on whether their own plan
+     * happened, as {@link #start} already lets them be. Refused (400) for a repeating
+     * plan, which is never asked, and before the question is due. A plan the host already
+     * started, ended or cancelled is left as it is: the question was answered.
+     */
+    @Transactional
+    public void checkIn(UUID activityId, UUID actorId, boolean happened) {
+        Activity activity = requireOwn(activityId, actorId);
+        if (activity.getRepeatFrequency() != null) {
+            throw new IllegalArgumentException("A repeating plan doesn't need this.");
+        }
+        ActivityStatusResolver.Lifecycle lifecycle = ActivityStatusResolver.Lifecycle.of(activity);
+        ZonedDateTime now = ZonedDateTime.now();
+        if (now.isBefore(ActivityStatusResolver.checkInDueAt(lifecycle))) {
+            throw new IllegalArgumentException("This plan isn't over yet. Start it or cancel it instead.");
+        }
+        if (activity.getStartedAt() != null || activity.getEndedAt() != null || activity.getCancelledAt() != null) {
+            return;
+        }
+        if (happened) {
+            ZonedDateTime end = ActivityStatusResolver.scheduledEnd(lifecycle);
+            activity.setStartedAt(activity.getStartTime());
+            activity.setEndedAt(end.isAfter(now) ? now : end);
+        } else {
+            activity.setCancelledAt(now);
+        }
+        activityRepository.saveAndFlush(activity);
+        eventPublisher.publishEvent(new ActivityChangedEvent(activityId, now.toInstant()));
     }
 
     /**

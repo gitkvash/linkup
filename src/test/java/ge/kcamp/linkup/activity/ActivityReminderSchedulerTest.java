@@ -191,6 +191,39 @@ class ActivityReminderSchedulerTest {
         assertThat(ActivityStatusResolver.nextStartAfter(once, start)).isNull();
     }
 
+    @Test
+    void theHostAloneIsAskedWhetherAOneOffNobodyStartedHappened() {
+        ZonedDateTime start = NOW.minusHours(2).minusMinutes(10);
+        ZonedDateTime from = NOW.minus(ActivityStatusResolver.START_GRACE)
+                .minus(ActivityReminderScheduler.CHECK_IN_CATCH_UP);
+        when(activities.findReminderCandidates(from, NOW.minus(ActivityStatusResolver.START_GRACE)))
+                .thenReturn(List.of(plan(start, null)));
+
+        scheduler.scan();
+
+        ArgumentCaptor<Object> published = ArgumentCaptor.forClass(Object.class);
+        verify(events).publishEvent(published.capture());
+        assertThat(published.getValue()).isInstanceOfSatisfying(ActivityCheckInDueEvent.class, event -> {
+            assertThat(event.activityId()).isEqualTo(activityId);
+            assertThat(event.hostId()).isEqualTo(host);
+            assertThat(event.startTime()).isEqualTo(start);
+            assertThat(event.occurredAt()).isEqualTo(start.toInstant());
+        });
+    }
+
+    @Test
+    void aRepeatingPlanOrOneTheHostAnsweredIsNotAsked() {
+        ZonedDateTime start = NOW.minusHours(2).minusMinutes(10);
+        Activity weekly = plan(start, RepeatFrequency.WEEKLY);
+        Activity started = plan(start, null);
+        started.setStartedAt(start);
+        when(activities.findReminderCandidates(any(), any())).thenReturn(List.of(weekly, started));
+
+        scheduler.scan();
+
+        verify(events, never()).publishEvent(any(ActivityCheckInDueEvent.class));
+    }
+
     private Activity plan(ZonedDateTime start, RepeatFrequency repeat) {
         Activity activity = new Activity();
         activity.setId(activityId);

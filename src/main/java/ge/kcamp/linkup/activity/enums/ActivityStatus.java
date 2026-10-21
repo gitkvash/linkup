@@ -8,7 +8,11 @@ package ge.kcamp.linkup.activity.enums;
  */
 public enum ActivityStatus {
 
-    /** Hasn't begun. The default, and the only state a plan can be created in. */
+    /**
+     * Hasn't begun. The default, and the only state a plan can be created in. Also a past
+     * one-off whose host has yet to say whether it happened - {@code needsCheckIn} on the
+     * read model tells the two apart.
+     */
     UPCOMING,
 
     /** Happening now: the host started it. A plan never starts by the clock alone. */
@@ -18,8 +22,10 @@ public enum ActivityStatus {
     ENDED,
 
     /**
-     * Didn't happen: the host cancelled it, or nobody started it within
-     * {@link ge.kcamp.linkup.activity.ActivityStatusResolver#START_GRACE} of its start time.
+     * Didn't happen: the host cancelled it or said it didn't happen, or nobody started
+     * it and its host didn't answer within
+     * {@link ge.kcamp.linkup.activity.ActivityStatusResolver#CHECK_IN_WINDOW} of being
+     * asked.
      * Deleting a plan is still separate - that removes it for everyone.
      */
     CANCELLED;

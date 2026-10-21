@@ -8,8 +8,9 @@ import java.util.Set;
 /**
  * How loudly a push should arrive. {@link #LOUD} is for what someone has to act on or
  * will be caught out by - an invitation, a friend request, a plan that moved or was
- * called off, a reminder. {@link #QUIET} is for news that can wait until they look: a
- * friend made a plan, someone declined, a suggestion was answered.
+ * called off, a reminder, a host asked whether their plan happened. {@link #QUIET} is for
+ * news that can wait until they look: a friend made a plan, someone declined, a
+ * suggestion was answered.
  * <p>
  * The client owns the actual sound: {@link #channelId} names an Android notification
  * channel that {@code MainActivity} creates, and a channel's importance can't be changed
@@ -36,7 +37,8 @@ public enum NotificationUrgency {
             "FRIEND_REQUEST",
             "ACTIVITY_REMINDER",
             "ACTIVITY_STARTING",
-            "ACTIVITY_STARTED");
+            "ACTIVITY_STARTED",
+            "ACTIVITY_CHECK_IN");
 
     private final String channelId;
 
